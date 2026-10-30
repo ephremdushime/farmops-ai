@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Case #{{ case['id'] }} · FarmOps AI{% endblock %}
+{% block content %}
+<div class="page-heading"><a class="back" href="{{ url_for('index') }}">← Dashboard</a><p class="eyebrow">CASE #{{ case['id'] }} · {{ case['created_at'] }}</p><h1>{{ case['farm_name'] }}</h1><p class="lead">{{ case['crop'] }} · {{ case['issue_type'] }} · {{ case['location'] }}</p></div>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-head"><div><p class="eyebrow">INITIAL REPORT</p><h2>What was observed</h2></div><span class="pill">{{ case['status'] }}</span></div>
+    <dl class="facts"><div><dt>Reporter</dt><dd>{{ case['reporter_name'] }}</dd></div><div><dt>Location</dt><dd>{{ case['location'] }}</dd></div><div><dt>Crop</dt><dd>{{ case['crop'] }}</dd></div><div><dt>Priority</dt><dd>{{ case['urgency'] }}</dd></div></dl>
+    <p class="report-text">{{ case['description'] }}</p>
+    <form class="status-form" method="post" action="{{ url_for('update_case_status', case_id=case['id']) }}"><label>Case status<select name="status">{% for s in ['Open','In progress','Resolved'] %}<option {% if case['status']==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label><button class="button secondary" type="submit">Update status</button></form>
+  </section>
+  <section class="panel plan-panel">
+    <p class="eyebrow">COORDINATED RESPONSE</p><h2>Summary and next steps</h2>
+    <p>{{ case['ai_summary'] }}</p>
+    <ol class="steps">{% for step in steps %}<li>{{ step }}</li>{% endfor %}</ol>
+    <div class="uncertainty"><strong>Uncertainty and safety</strong><p>{{ case['uncertainty'] }}</p></div>
+  </section>
+</div>
+<section class="panel tasks-panel">
+  <div class="panel-head"><div><p class="eyebrow">FOLLOW-THROUGH</p><h2>Tasks for this case</h2></div><span class="muted">{{ tasks|selectattr('status','equalto','Completed')|list|length }} / {{ tasks|length }} complete</span></div>
+  {% if tasks %}<div class="task-list">{% for t in tasks %}<div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}">{{ t['title'] }}</div><form method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}"><button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Mark done{% endif %}</button></form></div>{% endfor %}</div>{% else %}<p class="muted">No follow-up tasks.</p>{% endif %}
+</section>
+{% endblock %}

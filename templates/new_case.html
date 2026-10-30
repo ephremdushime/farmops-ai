@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}New case · FarmOps AI{% endblock %}
+{% block content %}
+<div class="page-heading"><a class="back" href="{{ url_for('index') }}">← Dashboard</a><p class="eyebrow">CASE INTAKE</p><h1>Report a farm incident</h1><p class="lead">Capture the initial report. FarmOps AI will structure the case and suggest coordination steps.</p></div>
+<form class="form-card" method="post">
+  <div class="form-grid">
+    <label>Farm or cooperative name<input required name="farm_name" value="{{ data.get('farm_name','') }}" placeholder="e.g. Nyamata Demo Farm"></label>
+    <label>Reporter name<input required name="reporter_name" value="{{ data.get('reporter_name','') }}" placeholder="Farmer or field officer"></label>
+    <label>Location / sector<input required name="location" value="{{ data.get('location','') }}" placeholder="District, sector, village"></label>
+    <label>Crop<input required name="crop" value="{{ data.get('crop','') }}" placeholder="e.g. maize, beans, potato"></label>
+    <label class="full">Incident category<select required name="issue_type"><option value="">Choose a category</option>{% for opt in ['Visible crop change','Pest concern','Water / irrigation','Soil / nutrient concern','Weather damage','Post-harvest / storage','Livestock-related','Other / unsure'] %}<option {% if data.get('issue_type')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+    <label class="full">What has been observed?<textarea required name="description" rows="5" placeholder="Describe what the farmer observed, when it started, how much of the field is affected, and any recent changes.">{{ data.get('description','') }}</textarea><small>Separate observations from assumptions. Do not include private personal information.</small></label>
+  </div>
+  <div class="form-actions"><a class="button secondary" href="{{ url_for('index') }}">Cancel</a><button class="button primary" type="submit">Create case and plan →</button></div>
+</form>
+{% endblock %}
