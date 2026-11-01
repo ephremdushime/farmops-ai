@@ -24,21 +24,50 @@
       <div><dt>Crop</dt><dd>{{ case['crop'] }}</dd></div>
       <div><dt>Priority (AI suggestion)</dt><dd>{{ case['urgency'] }}</dd></div>
     </dl>
+    {% if case['affected_area_value'] or case['field_position'] or case['proportion_affected'] or case['growth_stage'] or case['variety'] or case['planting_date'] or case['drainage'] or case['standing_water'] or case['soil_note'] or case['recent_weather'] %}
+    <h3>Recorded evidence details</h3>
+    <dl class="facts">
+      {% if case['affected_area_value'] %}<div><dt>Affected area</dt><dd>{{ case['affected_area_value'] }} {{ case['affected_area_unit'] }}</dd></div>{% endif %}
+      {% if case['field_position'] %}<div><dt>Position in field</dt><dd>{{ case['field_position'] }}</dd></div>{% endif %}
+      {% if case['proportion_affected'] %}<div><dt>Proportion affected</dt><dd>{{ case['proportion_affected'] }}</dd></div>{% endif %}
+      {% if case['growth_stage'] %}<div><dt>Growth stage</dt><dd>{{ case['growth_stage'] }}</dd></div>{% endif %}
+      {% if case['variety'] %}<div><dt>Variety</dt><dd>{{ case['variety'] }}</dd></div>{% endif %}
+      {% if case['planting_date'] %}<div><dt>Planting date</dt><dd>{{ case['planting_date'] }}</dd></div>{% endif %}
+      {% if case['drainage'] %}<div><dt>Drainage</dt><dd>{{ case['drainage'] }}</dd></div>{% endif %}
+      {% if case['standing_water'] %}<div><dt>Standing water</dt><dd>{{ case['standing_water'] }}</dd></div>{% endif %}
+      {% if case['soil_note'] %}<div><dt>Soil notes</dt><dd>{{ case['soil_note'] }}</dd></div>{% endif %}
+      {% if case['recent_weather'] %}<div><dt>Recent weather</dt><dd>{{ case['recent_weather'] }}</dd></div>{% endif %}
+    </dl>
+    {% endif %}
+
     <div class="report-text"><strong>Original field note</strong><p>{{ case['description'] }}</p></div>
-    <div class="evidence-quality"><div class="quality-heading"><strong>Evidence completeness</strong><strong>{{ evidence_completeness }}%</strong></div><div class="quality-track" role="img" aria-label="Evidence completeness {{ evidence_completeness }} percent"><span style="width: {{ evidence_completeness }}%"></span></div><p>Counts five recorded fields: observation, date, district/location, coordinates, and photograph. Not diagnosis confidence.</p></div>
+    <div class="evidence-quality"><div class="quality-heading"><strong>Evidence completeness</strong><strong>{{ evidence_completeness }}%</strong></div><div class="quality-track" role="img" aria-label="Evidence completeness {{ evidence_completeness }} percent"><span style="width: {{ evidence_completeness }}%"></span></div><p>Counts eight evidence dimensions: observation, date, district/location, coordinates, photograph, affected area, crop context, and field conditions. Not diagnosis confidence.</p></div>
     {% if case['latitude'] is not none and case['longitude'] is not none %}<p class="muted">Approximate report point: {{ case['latitude'] }}, {{ case['longitude'] }} · Not a farm boundary.</p>{% endif %}
-    {% if evidence_paths %}
+    {% if evidence_metadata %}
     <h3>Field photographs</h3>
     <div class="evidence-grid">
-      {% for image in evidence_paths %}
-      <a href="{{ url_for('case_evidence', case_id=case['id'], filename=image) }}" target="_blank" rel="noopener">
-        <img src="{{ url_for('case_evidence', case_id=case['id'], filename=image) }}" alt="Field evidence photograph {{ loop.index }}" loading="lazy">
-        <span>Photo {{ loop.index }}</span>
+      {% for evidence in evidence_metadata %}
+      <a href="{{ url_for('case_evidence', case_id=case['id'], filename=evidence['stored_name']) }}" target="_blank" rel="noopener">
+        <img src="{{ url_for('case_evidence', case_id=case['id'], filename=evidence['stored_name']) }}" alt="Field evidence photograph {{ loop.index }}" loading="lazy">
+        <span>{% if evidence['shot_type'] %}{{ evidence['shot_type']|title }} shot{% else %}Photo {{ loop.index }}{% endif %}</span>
       </a>
       {% endfor %}
     </div>
-    <ul class="evidence-meta">{% for evidence in evidence_metadata %}<li>{{ evidence['original_name'] }} · {{ evidence['media_type'] }} · {{ (evidence['size_bytes'] / 1024)|round|int }} KB · SHA-256 {{ evidence['sha256'][:12] }}…</li>{% endfor %}</ul>
+    <ul class="evidence-meta">{% for evidence in evidence_metadata %}<li>{{ evidence['original_name'] }} · {{ evidence['media_type'] }} · {{ (evidence['size_bytes'] / 1024)|round|int }} KB · SHA-256 {{ evidence['sha256'][:12] }}…{% if evidence['shot_type'] %} · {{ evidence['shot_type'] }}{% endif %}</li>{% endfor %}</ul>
     {% endif %}
+    {% if notes %}
+    <h3>Follow-up evidence</h3>
+    <ul class="evidence-notes">{% for note in notes %}<li><p>{{ note['note'] }}</p><small>by {{ note['author'] or 'Field team' }} · {{ note['created_at'] }}</small></li>{% endfor %}</ul>
+    {% endif %}
+    <form class="followup-form" method="post" action="{{ url_for('add_evidence', case_id=case['id']) }}" enctype="multipart/form-data">
+      <label>Add follow-up evidence<textarea name="note" rows="2" maxlength="2000" required placeholder="New measurements, observations, or corrections"></textarea></label>
+      <div class="followup-row">
+        <label>Author<input name="author" maxlength="120" placeholder="Field team"></label>
+        <label>Photo (optional)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></label>
+        <label>Shot type<select name="shot_type"><option value="">Unspecified</option><option>overview</option><option>affected</option><option>healthy</option><option>detail</option></select></label>
+      </div>
+      <button class="button secondary" type="submit">Record evidence</button>
+    </form>
     <form class="status-form" method="post" action="{{ url_for('update_case_status', case_id=case['id']) }}">
       <label>Case status
         <select name="status">{% for s in ['Open','In progress','Resolved'] %}<option {% if case['status']==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
@@ -58,6 +87,15 @@
     <h3>Coordinated next steps</h3>
     <ol class="steps">{% for step in steps %}<li>{{ step }}</li>{% endfor %}</ol>
     <div class="uncertainty"><strong>Uncertainty and safety</strong><p>{{ case['uncertainty'] }}</p></div>
+    {% if runs %}
+    <details class="runs-history">
+      <summary><strong>Assessment history</strong> · {{ runs|length }} run{{ 's' if runs|length != 1 }}</summary>
+      <ol class="audit-list">{% for run in runs %}<li><time>{{ run['created_at'] }}</time><strong>Run {{ run['run_number'] }}</strong><span>{{ run['source'] }}{% if run['model'] %} · {{ run['model'] }}{% endif %}</span></li>{% endfor %}</ol>
+    </details>
+    {% endif %}
+    <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}">
+      <div class="form-actions"><button class="button secondary" type="submit">Re-run assessment with latest evidence</button></div>
+    </form>
   </section>
 </div>
 {% if related_clusters %}
@@ -174,7 +212,7 @@
   {% if tasks %}
   <div class="task-list">
     {% for t in tasks %}
-    <div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}"><strong>{{ t['title'] }}</strong>{% if t['due_date'] %}<small> · Due {{ t['due_date'] }}</small>{% endif %}{% if t['status']=='Completed' and t['outcome'] %}<p class="task-outcome">Outcome: {{ t['outcome'] }}</p>{% endif %}</div><form class="task-action-form" method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}">{% if t['status']=='Pending' %}<label>What happened?<textarea name="outcome" rows="2" maxlength="2000" required placeholder="Record the field team's result"></textarea></label>{% endif %}<button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Complete{% endif %}</button></form></div>
+    <div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}"><strong>{{ t['title'] }}</strong>{% if t['kind']=='evidence' %}<span class="pill">Evidence</span>{% endif %}{% if t['due_date'] %}<small> · Due {{ t['due_date'] }}</small>{% endif %}{% if t['status']=='Completed' and t['outcome'] %}<p class="task-outcome">Outcome: {{ t['outcome'] }}</p>{% endif %}</div><form class="task-action-form" method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}">{% if t['status']=='Pending' %}<label>What happened?<textarea name="outcome" rows="2" maxlength="2000" required placeholder="Record the field team's result"></textarea></label>{% endif %}<button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Complete{% endif %}</button></form></div>
     {% endfor %}
   </div>
   {% else %}<p class="muted">No follow-up tasks.</p>{% endif %}

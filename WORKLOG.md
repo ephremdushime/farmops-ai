@@ -65,6 +65,12 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - Rotated to a fresh MODEL_API_KEY; synthetic live-fire case returned a genuine `Meta Model API` assessment (muse-spark-1.3) in ~19s.
 - Prior 401 was a rejected key value; app fallback behaved correctly throughout.
 
+## 2026-11-01 — Evidence-completeness system
+- Guided intake sections (affected area, crop context, field conditions), 4 labeled photo slots, live completeness meter.
+- Structured evidence feeds the Meta prompt; missing items become evidence tasks; follow-up notes plus one-click reassessment with run history.
+- Completeness scoring extended to 8 dimensions; verification queue prioritizes thin evidence; overview depth KPI added.
+- Validation: `python -m unittest` — 37 tests passed; live E2E verified (real Meta assess + reassess, runs 1-2 recorded).
+
 ## Next validation steps
 - [x] Confirm Meta Model API key and model access.
 - [x] Test the first real model request.

@@ -138,7 +138,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .queue-count strong { color: var(--ink); font-size: 20px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .queue-count small { color: var(--muted); font-size: 8px; }
 
-.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .stat { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--white); box-shadow: var(--shadow-sm); }
 .stat span, .stat small { display: block; color: var(--muted); font-size: 10px; }
 .stat strong { display: block; margin: 7px 0 2px; color: var(--ink); font-size: 27px; font-weight: 700; letter-spacing: -1px; line-height: 1; font-variant-numeric: tabular-nums; }

@@ -284,3 +284,27 @@ a.stat:hover { border-color: #2f5c44; }
 .watch-list a { font-size: 9px; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .watch-note { margin: 10px 0 0; color: var(--muted-light); font-size: 8px; }
 @media (max-width: 760px) { .watch-list li { grid-template-columns: minmax(0,1fr); gap: 6px; } }
+.form-section { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 10px; }
+.form-section legend { padding: 0 6px; font-size: 10px; font-weight: 750; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+.form-section .form-grid { margin-top: 4px; }
+.intake-meter { padding: 12px 14px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--white); }
+.intake-meter-head { display: flex; justify-content: space-between; gap: 10px; font-size: 10px; }
+.intake-meter-head strong { font-weight: 700; }
+.intake-meter-head span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.intake-meter-track { height: 6px; overflow: hidden; margin-top: 8px; border-radius: 99px; background: #0d1626; }
+.intake-meter-track span { display: block; height: 100%; width: 0; border-radius: inherit; background: #4cc38a; transition: width .2s; }
+.photo-slots { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+.photo-slots label { display: grid; gap: 6px; font-size: 10px; font-weight: 680; }
+@media (max-width: 760px) { .photo-slots { grid-template-columns: 1fr; } }
+.evidence-notes { padding: 0; margin: 8px 0 4px; list-style: none; }
+.evidence-notes li { padding: 9px 0; border-top: 1px solid #18243a; }
+.evidence-notes p { margin: 0 0 3px; font-size: 10px; }
+.evidence-notes small { color: var(--muted); font-size: 8px; }
+.followup-form { display: grid; gap: 10px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
+.followup-form > label { display: grid; gap: 6px; font-size: 10px; font-weight: 680; }
+.followup-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(120px,.7fr); gap: 10px; }
+.followup-row label { display: grid; gap: 5px; font-size: 9px; font-weight: 650; }
+.followup-form button { justify-self: start; }
+.runs-history { margin-top: 13px; }
+.runs-history summary { cursor: pointer; font-size: 10px; }
+@media (max-width: 760px) { .followup-row { grid-template-columns: 1fr; } }

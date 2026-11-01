@@ -2,21 +2,60 @@
 {% block title %}New case · FarmOps AI{% endblock %}
 {% block page_context %}New Observation{% endblock %}
 {% block content %}
-<div class="page-heading"><div><a class="back" href="{{ url_for('field_reports') }}">← Field reports</a><p class="eyebrow">FIELD OBSERVATION · EVIDENCE INTAKE</p><h1>Report field evidence</h1><p class="lead">Capture the observation and its context. Record what was seen separately from assumptions; coordinates are optional and should never be estimated.</p></div></div>
+<div class="page-heading"><div><a class="back" href="{{ url_for('field_reports') }}">← Field reports</a><p class="eyebrow">FIELD OBSERVATION · EVIDENCE INTAKE</p><h1>Report field evidence</h1><p class="lead">Capture the observation and its context. Record what was seen separately from assumptions; coordinates are optional and should never be estimated. Optional evidence sections raise the completeness score and sharpen the AI assessment.</p></div></div>
+<div class="intake-meter" role="status" aria-label="Evidence completeness meter"><div class="intake-meter-head"><strong>Evidence completeness</strong><span id="intake-meter-label">0 of 15 evidence fields</span></div><div class="intake-meter-track"><span id="intake-meter-fill"></span></div></div>
 <form class="form-card" method="post" enctype="multipart/form-data">
   <div class="form-grid">
-    <label>Farm or cooperative name<input required name="farm_name" value="{{ data.get('farm_name','') }}" placeholder="e.g. Nyamata Demo Farm"></label>
-    <label>Reporter name<input required name="reporter_name" value="{{ data.get('reporter_name','') }}" placeholder="Farmer or field officer"></label>
-    <label>Location / sector<input required name="location" value="{{ data.get('location','') }}" placeholder="Sector, cell, village"></label>
-    <label>District<input required name="district" maxlength="120" value="{{ data.get('district','') }}" placeholder="District name"></label>
-    <label>Crop<input required name="crop" value="{{ data.get('crop','') }}" placeholder="e.g. maize, beans, potato"></label>
-    <label>Date observed<input required type="date" name="observed_at" max="{{ data.get('today', data.get('observed_at','')) }}" value="{{ data.get('observed_at','') }}"></label>
-    <label class="full">Incident category<select required name="issue_type"><option value="">Choose a category</option>{% for opt in ['Visible crop change','Pest concern','Water / irrigation','Soil / nutrient concern','Weather damage','Post-harvest / storage','Livestock-related','Other / unsure'] %}<option {% if data.get('issue_type')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
-    <label class="full">What has been observed?<textarea required name="description" rows="5" placeholder="Describe what the farmer observed, when it started, how much of the field is affected, and any recent changes.">{{ data.get('description','') }}</textarea><small>Separate observations from assumptions. Do not include private personal information.</small></label>
-    <div class="notice full"><strong>Meta data sharing:</strong> when configured, crop, issue category, observation date, and description are sent to Meta for analysis. Reporter and farm names, location, district, and coordinates are not sent. Avoid personal details in the description or images. Attached photos are sent for analysis after embedded metadata is removed.</div>
-    <label class="full">Field photographs<input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple><small>Optional · Up to 3 JPEG, PNG, or WebP images, 5 MB each. Original images are stored outside public static assets. This prototype has no sign-in, so case links are not access-controlled. The image pixels are sent to Meta when API access is configured; embedded metadata is stripped first.</small></label>
+    <fieldset class="form-section full"><legend>Observation (required)</legend>
+      <div class="form-grid">
+        <label>Farm or cooperative name<input required name="farm_name" value="{{ data.get('farm_name','') }}" placeholder="e.g. Nyamata Demo Farm"></label>
+        <label>Reporter name<input required name="reporter_name" value="{{ data.get('reporter_name','') }}" placeholder="Farmer or field officer"></label>
+        <label>Location / sector<input required name="location" value="{{ data.get('location','') }}" placeholder="Sector, cell, village"></label>
+        <label>District<input required name="district" maxlength="120" value="{{ data.get('district','') }}" placeholder="District name"></label>
+        <label>Crop<input required name="crop" value="{{ data.get('crop','') }}" placeholder="e.g. maize, beans, potato"></label>
+        <label>Date observed<input required type="date" name="observed_at" max="{{ data.get('today', data.get('observed_at','')) }}" value="{{ data.get('observed_at','') }}"></label>
+        <label class="full">Incident category<select required name="issue_type"><option value="">Choose a category</option>{% for opt in ['Visible crop change','Pest concern','Water / irrigation','Soil / nutrient concern','Weather damage','Post-harvest / storage','Livestock-related','Other / unsure'] %}<option {% if data.get('issue_type')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+        <label class="full">What has been observed?<textarea required name="description" rows="5" placeholder="Describe what the farmer observed, when it started, how much of the field is affected, and any recent changes.">{{ data.get('description','') }}</textarea><small>Separate observations from assumptions. Do not include private personal information.</small></label>
+      </div>
+    </fieldset>
+    <fieldset class="form-section full"><legend>Affected area (optional)</legend>
+      <div class="form-grid">
+        <label>Size affected<input name="affected_area_value" data-evidence inputmode="decimal" value="{{ data.get('affected_area_value','') }}" placeholder="e.g. 2.5"></label>
+        <label>Unit<select name="affected_area_unit" data-evidence><option value="">Unspecified</option>{% for opt in ['ares','hectares','acres','plants'] %}<option {% if data.get('affected_area_unit')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+        <label>Position in field<input name="field_position" data-evidence maxlength="120" value="{{ data.get('field_position','') }}" placeholder="e.g. northwest corner, near the stream"></label>
+        <label>Proportion affected<select name="proportion_affected" data-evidence><option value="">Unspecified</option>{% for opt in ['Under 10%','10-25%','25-50%','Over 50%','Whole field'] %}<option {% if data.get('proportion_affected')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+      </div>
+    </fieldset>
+    <fieldset class="form-section full"><legend>Crop context (optional)</legend>
+      <div class="form-grid">
+        <label>Growth stage<input name="growth_stage" data-evidence maxlength="120" value="{{ data.get('growth_stage','') }}" placeholder="e.g. flowering, grain filling"></label>
+        <label>Variety<input name="variety" data-evidence maxlength="120" value="{{ data.get('variety','') }}" placeholder="e.g. Longe 5"></label>
+        <label>Planting date<input type="date" name="planting_date" data-evidence max="{{ data.get('today', '') }}" value="{{ data.get('planting_date','') }}"></label>
+      </div>
+    </fieldset>
+    <fieldset class="form-section full"><legend>Field conditions (optional)</legend>
+      <div class="form-grid">
+        <label>Drainage<select name="drainage" data-evidence><option value="">Unspecified</option>{% for opt in ['Good','Moderate','Poor','Waterlogged'] %}<option {% if data.get('drainage')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+        <label>Standing water<select name="standing_water" data-evidence><option value="">Unspecified</option>{% for opt in ['Yes','No'] %}<option {% if data.get('standing_water')==opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+        <label>Soil notes<textarea name="soil_note" data-evidence rows="2" maxlength="500" placeholder="Soil type, colour, compaction near the affected area.">{{ data.get('soil_note','') }}</textarea></label>
+        <label>Recent weather<textarea name="recent_weather" data-evidence rows="2" maxlength="500" placeholder="Rain, dry spell, hail, or irrigation in the last two weeks.">{{ data.get('recent_weather','') }}</textarea></label>
+      </div>
+    </fieldset>
+    <div class="notice full"><strong>Meta data sharing:</strong> when configured, crop, issue category, observation date, description, and the affected-area, crop-context, and field-condition details above are sent to Meta for analysis. Reporter and farm names, location, district, and coordinates are not sent. Avoid personal details in the description or images. Attached photos are sent for analysis after embedded metadata is removed.</div>
+    <fieldset class="form-section full"><legend>Field photographs (optional · 4 guided shots)</legend>
+      <div class="photo-slots">
+        <label>1 · Whole field<input type="file" name="photos_overview" data-evidence accept="image/jpeg,image/png,image/webp"><small>Stand back: show the affected area in context.</small></label>
+        <label>2 · Affected close-up<input type="file" name="photos_affected" data-evidence accept="image/jpeg,image/png,image/webp"><small>Fill the frame with symptoms.</small></label>
+        <label>3 · Healthy comparison<input type="file" name="photos_healthy" data-evidence accept="image/jpeg,image/png,image/webp"><small>Same crop, unaffected plants.</small></label>
+        <label>4 · Detail<input type="file" name="photos_detail" data-evidence accept="image/jpeg,image/png,image/webp"><small>Leaf, stem, or soil close-up.</small></label>
+      </div>
+      <small class="muted">JPEG, PNG, or WebP, 5 MB each. Originals are stored outside public static assets. This prototype has no sign-in, so case links are not access-controlled. Pixels are sent to Meta when API access is configured; embedded metadata is stripped first.</small>
+    </fieldset>
     <fieldset class="coordinate-fields full"><legend>Map coordinates (optional)</legend><div class="coordinate-grid"><label>Latitude<input name="latitude" type="number" step="any" min="-90" max="90" value="{{ data.get('latitude','') }}" placeholder="-1.95"></label><label>Longitude<input name="longitude" type="number" step="any" min="-180" max="180" value="{{ data.get('longitude','') }}" placeholder="30.06"></label></div><small>Enter both coordinates only when known. Stored as approximate report locations, not farm boundaries.</small></fieldset>
   </div>
   <div class="form-actions"><a class="button secondary" href="{{ url_for('index') }}">Cancel</a><button class="button primary" type="submit">Create case and plan →</button></div>
 </form>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='intake.js') }}" defer></script>
 {% endblock %}

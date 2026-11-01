@@ -32,6 +32,7 @@
   <a class="stat warning" href="{{ url_for('response_operations') }}" aria-label="Actions pending: open linked view"><div class="stat-label"><span>Actions pending</span><i aria-hidden="true"></i></div><strong>{{ task_counts['pending'] or 0 }}</strong><small>Field follow-through</small></a>
   <a class="stat" href="{{ url_for('response_operations') }}?status=Completed" aria-label="Actions completed: open linked view"><div class="stat-label"><span>Actions completed</span><i aria-hidden="true"></i></div><strong>{{ task_counts['completed'] or 0 }}</strong><small>Outcome recorded</small></a>
   <a class="stat" href="{{ url_for('intelligence_cases') }}" aria-label="Active signals: open linked view"><div class="stat-label"><span>Active signals</span><i aria-hidden="true"></i></div><strong>{{ risk_clusters|length }}</strong><small>Candidate groupings</small></a>
+  <a class="stat" href="{{ url_for('verification_centre') }}" aria-label="Evidence depth: open verification queue"><div class="stat-label"><span>Evidence depth</span><i aria-hidden="true"></i></div><strong>{{ avg_completeness }}%</strong><small>Average completeness</small></a>
 </section>
 
 <section class="analytics-grid" aria-label="Intake analytics">

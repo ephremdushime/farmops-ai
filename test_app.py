@@ -132,6 +132,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
             [event["event_type"] for event in events],
             ["report_submitted", "action_assigned", "action_assigned",
              "action_assigned", "action_assigned", "action_assigned",
+             "evidence_requested", "evidence_requested", "evidence_requested",
              "case_status_changed", "action_completed"],
         )
 
@@ -698,6 +699,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"DISTRICT RANKING", overview.data)
         self.assertIn(b"Urgency mix", overview.data)
         self.assertIn(b"OPERATIONS WATCH", overview.data)
+        self.assertIn(b"Evidence depth", overview.data)
         self.assertIn(b"First reports from", overview.data)
 
     def test_watch_signals_flag_intake_spike(self):
@@ -767,6 +769,240 @@ class FarmOpsSmokeTests(unittest.TestCase):
         )
         self.assertEqual(signals, [])
 
+    def test_evidence_details_validation(self):
+        valid = {
+            "affected_area_value": "2.5",
+            "affected_area_unit": "hectares",
+            "field_position": "Northwest corner",
+            "proportion_affected": "10-25%",
+            "growth_stage": "Flowering",
+            "variety": "Longe 5",
+            "planting_date": "2026-09-01",
+            "drainage": "Poor",
+            "standing_water": "Yes",
+            "soil_note": "Clay near the stream.",
+            "recent_weather": "Heavy rain for two days.",
+        }
+        cleaned = self.module._validate_evidence_details(valid)
+        self.assertEqual(cleaned["affected_area_value"], 2.5)
+        self.assertEqual(cleaned["proportion_affected"], "10-25%")
+        self.assertEqual(
+            self.module._validate_evidence_details({})["affected_area_value"], None
+        )
+        with self.assertRaisesRegex(ValueError, "positive number"):
+            self.module._validate_evidence_details({"affected_area_value": "-1"})
+        with self.assertRaisesRegex(ValueError, "number"):
+            self.module._validate_evidence_details({"affected_area_value": "lots"})
+        with self.assertRaisesRegex(ValueError, "area unit"):
+            self.module._validate_evidence_details({"affected_area_unit": "parsecs"})
+        future = (self.module.datetime.now(self.module.timezone.utc).date()
+                  + self.module.timedelta(days=1)).isoformat()
+        with self.assertRaisesRegex(ValueError, "future"):
+            self.module._validate_evidence_details({"planting_date": future})
+        with self.assertRaisesRegex(ValueError, "120 characters"):
+            self.module._validate_evidence_details({"variety": "x" * 121})
+
+    def test_new_case_saves_evidence_details(self):
+        response = self.client.post("/cases/new", data={
+            "farm_name": "Demo Farm",
+            "reporter_name": "Field Officer",
+            "location": "Demo District",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "description": "Yellowing leaves after heavy rain.",
+            "district": "Central Demo District",
+            "observed_at": self.module.datetime.now(
+                self.module.timezone.utc).date().isoformat(),
+            "affected_area_value": "2.5",
+            "affected_area_unit": "hectares",
+            "field_position": "Northwest corner",
+            "proportion_affected": "10-25%",
+            "growth_stage": "Flowering",
+            "variety": "Longe 5",
+            "drainage": "Poor",
+            "standing_water": "Yes",
+        })
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            row = conn.execute(
+                "SELECT affected_area_value, affected_area_unit, growth_stage,"
+                " standing_water FROM cases").fetchone()
+        self.assertEqual(row["affected_area_value"], 2.5)
+        self.assertEqual(row["affected_area_unit"], "hectares")
+        self.assertEqual(row["growth_stage"], "Flowering")
+        self.assertEqual(row["standing_water"], "Yes")
+
+    def test_labeled_photo_slots_store_shot_types(self):
+        image_bytes = b"\x89PNG\r\n\x1a\nfake-image-data"
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new",
+                data={
+                    "farm_name": "Demo Farm",
+                    "reporter_name": "Field Officer",
+                    "location": "Demo District",
+                    "crop": "Maize",
+                    "issue_type": "Visible crop change",
+                    "description": "Yellowing leaves.",
+                    "district": "Central Demo District",
+                    "observed_at": self.module.datetime.now(
+                        self.module.timezone.utc).date().isoformat(),
+                    "photos_overview": (BytesIO(image_bytes), "wide.png", "image/png"),
+                    "photos_detail": (BytesIO(image_bytes), "leaf.png", "image/png"),
+                },
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            shots = [row["shot_type"] for row in conn.execute(
+                "SELECT shot_type FROM case_evidence ORDER BY id")]
+        self.assertEqual(shots, ["overview", "detail"])
+
+    def test_photo_cap_is_four(self):
+        image_bytes = b"\x89PNG\r\n\x1a\nfake-image-data"
+        files = [("photos", (BytesIO(image_bytes), "leaf%d.png" % i, "image/png"))
+                 for i in range(5)]
+        data = {
+            "farm_name": "Demo Farm",
+            "reporter_name": "Field Officer",
+            "location": "Demo District",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "description": "Yellowing leaves.",
+            "district": "Central Demo District",
+            "observed_at": self.module.datetime.now(
+                self.module.timezone.utc).date().isoformat(),
+        }
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new", data=dict(data, photos=[f[1] for f in files]),
+                content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"no more than 4", response.data)
+
+    def test_meta_payload_includes_structured_evidence(self):
+        payload = {
+            "summary": "A maize report needs field verification.",
+            "urgency": "Soon",
+            "observations": ["Yellowing leaves after heavy rain."],
+            "hypotheses": [],
+            "missing_information": ["Affected area is not known."],
+            "follow_up_questions": ["When did the symptoms first appear?"],
+            "steps": ["Confirm onset.", "Estimate affected area.", "Arrange field review."],
+            "uncertainty": "The report alone cannot establish the cause.",
+        }
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(payload), model="muse-spark-1.3"
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                result = self.module.analyze_with_meta(
+                    {
+                        "farm_name": "Secret Farm",
+                        "reporter_name": "Secret Reporter",
+                        "location": "Demo District",
+                        "crop": "Maize",
+                        "issue_type": "Visible crop change",
+                        "description": "Yellowing leaves after heavy rain.",
+                        "growth_stage": "Flowering",
+                        "variety": "Longe 5",
+                        "affected_area_value": 2.5,
+                        "affected_area_unit": "hectares",
+                        "drainage": "Poor",
+                    }
+                )
+        self.assertEqual(result["mode"], "Meta Model API")
+        prompt_text = client.responses.create.call_args.kwargs["input"][0]["content"][0]["text"]
+        self.assertIn("Flowering", prompt_text)
+        self.assertIn("Longe 5", prompt_text)
+        self.assertIn("2.5", prompt_text)
+        self.assertNotIn("Secret Reporter", prompt_text)
+
+    def test_initial_assessment_run_is_recorded(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            runs = conn.execute(
+                "SELECT run_number, source, assessment_json FROM assessment_runs"
+                " WHERE case_id=? ORDER BY run_number", (case_id,)).fetchall()
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["run_number"], 1)
+        self.assertIn("DEMO MODE", runs[0]["source"])
+        stored = json.loads(runs[0]["assessment_json"])
+        self.assertIn("Demo Farm", stored["summary"])
+
+    def test_evidence_tasks_carry_evidence_kind(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            kinds = sorted(row["kind"] for row in conn.execute(
+                "SELECT kind FROM tasks WHERE case_id=?", (case_id,)).fetchall())
+        self.assertEqual(kinds, ["action"] * 5 + ["evidence"] * 3)
+
+    def test_follow_up_evidence_and_reassessment(self):
+        case_id = self.create_case()
+        response = self.client.post(
+            f"/cases/{case_id}/evidence",
+            data={"author": "Field Officer",
+                  "note": "Affected area measured at 2 hectares on revisit."})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(b"Affected area measured", self.client.get(f"/cases/{case_id}").data)
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            rerun = self.client.post(f"/cases/{case_id}/reassess")
+        self.assertEqual(rerun.status_code, 302)
+        with self.module.db() as conn:
+            runs = conn.execute(
+                "SELECT run_number FROM assessment_runs WHERE case_id=? ORDER BY run_number",
+                (case_id,)).fetchall()
+            self.assertEqual([row["run_number"] for row in runs], [1, 2])
+            events = conn.execute(
+                "SELECT event_type FROM case_events WHERE case_id=? AND event_type IN"
+                " ('evidence_added','assessment_rerun') ORDER BY id", (case_id,)).fetchall()
+        self.assertEqual([row["event_type"] for row in events],
+                         ["evidence_added", "assessment_rerun"])
+        self.assertIn(b"Assessment history", self.client.get(f"/cases/{case_id}").data)
+
+    def test_evidence_completeness_counts_new_dimensions(self):
+        full = {
+            "description": "Yellowing leaves.",
+            "observed_at": "2026-11-01",
+            "district": "Central",
+            "location": "Sector 1",
+            "latitude": -1.95,
+            "longitude": 30.06,
+            "evidence_paths": ["a.png"],
+            "affected_area_value": 2.5,
+            "growth_stage": "Flowering",
+            "drainage": "Poor",
+        }
+        self.assertEqual(self.module.evidence_completeness(full), 100)
+        thin = {"description": "Yellowing leaves.", "observed_at": "2026-11-01"}
+        self.assertEqual(self.module.evidence_completeness(thin), 25)
+
+    def test_verification_queue_prioritizes_thin_evidence(self):
+        thin_id = self.create_case(crop="Beans")
+        self.client.post("/cases/new", data={
+            "farm_name": "Demo Farm",
+            "reporter_name": "Field Officer",
+            "location": "Demo District",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "description": "Yellowing leaves after heavy rain.",
+            "district": "Central Demo District",
+            "observed_at": self.module.datetime.now(
+                self.module.timezone.utc).date().isoformat(),
+            "latitude": "-1.95",
+            "longitude": "30.06",
+            "affected_area_value": "2",
+            "affected_area_unit": "hectares",
+            "growth_stage": "Flowering",
+            "variety": "Longe 5",
+            "drainage": "Good",
+        })
+        with self.module.db() as conn:
+            rich_id = conn.execute("SELECT MAX(id) FROM cases").fetchone()[0]
+        page = self.client.get("/verification").data.decode("utf-8")
+        self.assertLess(page.index(f"/cases/{thin_id}"), page.index(f"/cases/{rich_id}"))
+
     def test_existing_database_is_migrated_without_losing_cases(self):
         old_db_path = Path(self.temp_dir.name) / "old-farmops.db"
         with closing(sqlite3.connect(old_db_path)) as conn:
@@ -824,8 +1060,18 @@ class FarmOpsSmokeTests(unittest.TestCase):
                 self.assertEqual(row["observation_ref"], "")
                 self.assertEqual(row["assessment_source"], "")
                 self.assertEqual(row["assessment_model"], "")
+                self.assertEqual(row["growth_stage"], "")
+                self.assertEqual(row["recent_weather"], "")
+                self.assertIsNone(row["affected_area_value"])
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM assessment_runs").fetchone()[0], 0
+                )
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM case_notes").fetchone()[0], 0
+                )
                 task = conn.execute("SELECT * FROM tasks WHERE title='Legacy task'").fetchone()
                 self.assertEqual(task["outcome"], "")
+                self.assertEqual(task["kind"], "action")
         finally:
             self.module.DB_PATH = original_db_path
 
