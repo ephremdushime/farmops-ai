@@ -3,13 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}FarmOps AI{% endblock %}</title>
+  <title>{% block title %}FarmOps AI — Field Intelligence{% endblock %}</title>
+  {% block head %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workflow.css') }}">
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">F</span><span>FarmOps <b>AI</b><small>Field response workspace</small></span></a>
-  <nav><a href="{{ url_for('index') }}">Dashboard</a><a class="nav-cta" href="{{ url_for('new_case') }}">+ New case</a></nav>
+  <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">F</span><span>FarmOps <b>AI</b><small>Field Intelligence</small></span></a>
+  <nav class="primary-nav" aria-label="Main navigation">
+    <a href="{{ url_for('index') }}">Overview</a>
+    <a href="{{ url_for('field_reports') }}">Field reports</a>
+    <a href="{{ url_for('intelligence_cases') }}">Intelligence</a>
+    <a href="{{ url_for('risk_map') }}">Risk map</a>
+    <a href="{{ url_for('verification_centre') }}">Verification</a>
+    <a href="{{ url_for('response_operations') }}">Operations</a>
+    <a class="nav-cta" href="{{ url_for('new_case') }}">+ New report</a>
+  </nav>
 </header>
 <main class="container">
   {% with messages = get_flashed_messages(with_categories=true) %}
@@ -17,6 +27,6 @@
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
-<footer>FarmOps AI · Hackathon prototype · Not a substitute for local agricultural expertise</footer>
+<footer>FarmOps AI — Field Intelligence · Hackathon prototype · Not a substitute for local agricultural expertise</footer>
 </body>
 </html>

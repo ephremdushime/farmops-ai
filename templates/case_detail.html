@@ -1,23 +1,183 @@
 {% extends "base.html" %}
 {% block title %}Case #{{ case['id'] }} · FarmOps AI{% endblock %}
 {% block content %}
-<div class="page-heading"><a class="back" href="{{ url_for('index') }}">← Dashboard</a><p class="eyebrow">CASE #{{ case['id'] }} · {{ case['created_at'] }}</p><h1>{{ case['farm_name'] }}</h1><p class="lead">{{ case['crop'] }} · {{ case['issue_type'] }} · {{ case['location'] }}</p></div>
+<div class="page-heading">
+  <a class="back" href="{{ url_for('index') }}">← Dashboard</a>
+  <p class="eyebrow">CASE #{{ case['id'] }} · {{ case['observation_ref'] or 'LEGACY REPORT' }} · {{ case['created_at'] }}</p>
+  <h1>{{ case['farm_name'] }}</h1>
+  <p class="lead">{{ case['crop'] }} · {{ case['issue_type'] }} · {{ case['location'] }}</p>
+</div>
 <div class="detail-grid">
   <section class="panel">
-    <div class="panel-head"><div><p class="eyebrow">INITIAL REPORT</p><h2>What was observed</h2></div><span class="pill">{{ case['status'] }}</span></div>
-    <dl class="facts"><div><dt>Reporter</dt><dd>{{ case['reporter_name'] }}</dd></div><div><dt>Location</dt><dd>{{ case['location'] }}</dd></div><div><dt>Crop</dt><dd>{{ case['crop'] }}</dd></div><div><dt>Priority</dt><dd>{{ case['urgency'] }}</dd></div></dl>
+    <div class="panel-head">
+      <div><p class="eyebrow">INITIAL REPORT</p><h2>What was observed</h2></div>
+      <span class="pill">{{ case['status'] }}</span>
+    </div>
+    <dl class="facts">
+      <div><dt>Reporter</dt><dd>{{ case['reporter_name'] }}</dd></div>
+      <div><dt>District</dt><dd>{{ case['district'] }}</dd></div>
+      <div><dt>Location</dt><dd>{{ case['location'] }}</dd></div>
+      <div><dt>Observed</dt><dd>{{ case['observed_at'] }}</dd></div>
+      <div><dt>Crop</dt><dd>{{ case['crop'] }}</dd></div>
+      <div><dt>Priority (AI suggestion)</dt><dd>{{ case['urgency'] }}</dd></div>
+    </dl>
     <p class="report-text">{{ case['description'] }}</p>
-    <form class="status-form" method="post" action="{{ url_for('update_case_status', case_id=case['id']) }}"><label>Case status<select name="status">{% for s in ['Open','In progress','Resolved'] %}<option {% if case['status']==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label><button class="button secondary" type="submit">Update status</button></form>
+    <div class="evidence-quality"><strong>Report completeness · {{ evidence_completeness }}%</strong><p>Counts five recorded fields: observation, date, district/location, coordinates, and photograph. This is not a diagnosis or calibrated AI confidence score.</p></div>
+    {% if case['latitude'] is not none and case['longitude'] is not none %}<p class="muted">Approximate report point: {{ case['latitude'] }}, {{ case['longitude'] }} · Not a farm boundary.</p>{% endif %}
+    {% if evidence_paths %}
+    <h3>Field photographs</h3>
+    <div class="evidence-grid">
+      {% for image in evidence_paths %}
+      <a href="{{ url_for('case_evidence', case_id=case['id'], filename=image) }}" target="_blank" rel="noopener">
+        <img src="{{ url_for('case_evidence', case_id=case['id'], filename=image) }}" alt="Field evidence photograph {{ loop.index }}" loading="lazy">
+        <span>Photo {{ loop.index }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    <ul class="evidence-meta">{% for evidence in evidence_metadata %}<li>{{ evidence['original_name'] }} · {{ evidence['media_type'] }} · {{ (evidence['size_bytes'] / 1024)|round|int }} KB · SHA-256 {{ evidence['sha256'][:12] }}…</li>{% endfor %}</ul>
+    {% endif %}
+    <form class="status-form" method="post" action="{{ url_for('update_case_status', case_id=case['id']) }}">
+      <label>Case status
+        <select name="status">{% for s in ['Open','In progress','Resolved'] %}<option {% if case['status']==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+      </label>
+      <button class="button secondary" type="submit">Update status</button>
+    </form>
   </section>
   <section class="panel plan-panel">
-    <p class="eyebrow">COORDINATED RESPONSE</p><h2>Summary and next steps</h2>
+    <p class="eyebrow">AI ASSESSMENT · HUMAN VERIFICATION REQUIRED</p>
+    <h2>Summary and next steps</h2>
     <p>{{ case['ai_summary'] }}</p>
+    {% if observations %}<h3>Reported observations</h3><ul class="assessment-list">{% for item in observations %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% if hypotheses %}<h3>Tentative hypotheses</h3><ul class="assessment-list">{% for item in hypotheses %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% if missing_information %}<h3>Information still needed</h3><ul class="assessment-list">{% for item in missing_information %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% if follow_up_questions %}<h3>Questions for the reporter</h3><ul class="assessment-list">{% for item in follow_up_questions %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    <h3>Coordinated next steps</h3>
     <ol class="steps">{% for step in steps %}<li>{{ step }}</li>{% endfor %}</ol>
     <div class="uncertainty"><strong>Uncertainty and safety</strong><p>{{ case['uncertainty'] }}</p></div>
   </section>
 </div>
+{% if related_clusters %}
+<section class="panel related-panel">
+  <p class="eyebrow">SPATIAL CONTEXT</p><h2>Potentially related field reports</h2>
+  <p class="muted">Candidate linkage is based on crop, issue category, reported date, and distance. It is not a confirmed outbreak.</p>
+  {% for cluster in related_clusters %}
+  <p><strong>{{ cluster['signal_label'] }} · {{ cluster['count'] }} reports</strong> — {{ cluster['explanation'] }}</p>
+  {% for report in cluster['reports'] if report['id'] != case['id'] %}
+  <p><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['district'] }} · {{ report['observed_at'] }}</a></p>
+  {% endfor %}
+  {% endfor %}
+</section>
+{% endif %}
+<section class="panel review-panel" id="officer-review">
+  <div class="panel-head">
+    <div><p class="eyebrow">HUMAN VERIFICATION</p><h2>Officer review</h2></div>
+    <span class="pill review-pill">{{ case['review_status'] }}</span>
+  </div>
+  <p class="muted">Review the report and evidence. Record a decision and any corrections. This prototype records the reviewer name but does not authenticate identities.</p>
+  <form method="post" action="{{ url_for('review_case', case_id=case['id']) }}" class="review-form">
+    <div class="review-fields">
+      <label>Reviewing officer<input name="reviewer" required maxlength="120" placeholder="Officer name"></label>
+      <label>Decision
+        <select name="decision" required>
+          <option value="">Select a decision</option>
+          <option value="verified">Verified — assessment is supported</option>
+          <option value="follow_up">Needs follow-up — more evidence required</option>
+          <option value="rejected">Rejected — assessment is not supported</option>
+        </select>
+      </label>
+    </div>
+    <label>Corrected summary<textarea name="reviewed_summary" rows="3" maxlength="2000" required>{{ review_assessment['summary'] }}</textarea></label>
+    <label>Verified observations <small>One observation per line; correct or remove unsupported statements.</small>
+      <textarea name="reviewed_observations" rows="4">{% for item in review_assessment['observations'] %}{{ item }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+    </label>
+    <div class="review-fields">
+      <label>Reviewed urgency
+        <select name="reviewed_urgency" required>{% for urgency in ['Routine','Soon','Urgent field review','Needs review'] %}<option value="{{ urgency }}" {% if review_assessment['urgency']==urgency %}selected{% endif %}>{{ urgency }}</option>{% endfor %}</select>
+      </label>
+      <label>Corrected information still needed <small>One item per line.</small>
+        <textarea name="reviewed_missing_information" rows="3" required>{% for item in review_assessment['missing_information'] %}{{ item }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+      </label>
+    </div>
+    <label>Corrected coordinated actions <small>One action per line.</small>
+      <textarea name="reviewed_steps" rows="4" required>{% for item in review_assessment['steps'] %}{{ item }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+    </label>
+    <label>Corrected questions for the reporter <small>One question per line.</small>
+      <textarea name="reviewed_follow_up_questions" rows="3" required>{% for item in review_assessment['follow_up_questions'] %}{{ item }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+    </label>
+    <label>Reviewed uncertainty and limits<textarea name="reviewed_uncertainty" rows="3" maxlength="2000" required>{{ review_assessment['uncertainty'] }}</textarea></label>
+    {% if review_assessment['hypotheses'] %}
+    <fieldset class="hypothesis-review">
+      <legend>Review each AI hypothesis</legend>
+      {% for hypothesis in review_assessment['hypotheses'] %}
+      <div class="hypothesis-row">
+        <label>Officer's assessment<input name="hypothesis_text_{{ loop.index0 }}" required maxlength="500" value="{{ hypothesis }}"></label>
+        <label>Disposition
+          <select name="hypothesis_decision_{{ loop.index0 }}" required>
+            <option value="unresolved" selected>Unresolved</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </label>
+      </div>
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+    <label>Review notes <small>Optional · Add evidence references or explain the decision.</small>
+      <textarea name="notes" rows="3" maxlength="2000"></textarea>
+    </label>
+    <div class="form-actions"><button class="button primary" type="submit">Save review to audit trail</button></div>
+  </form>
+  {% if reviews %}
+  <div class="review-history">
+    <h3>Review audit trail</h3>
+    {% for review in reviews %}
+    <article class="review-entry">
+      <div class="review-entry-head"><strong>{{ review['reviewer'] }}</strong><span class="pill">{{ review['decision']|replace('_',' ')|title }}</span><time>{{ review['created_at'] }}</time></div>
+      <p>{{ review['reviewed_assessment'].get('summary', '') }}</p>
+      <p><strong>Reviewed urgency:</strong> {{ review['reviewed_assessment'].get('urgency', '') }}</p>
+      {% if review['reviewed_assessment'].get('observations') %}<p><strong>Verified observations</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['observations'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+      {% if review['reviewed_assessment'].get('missing_information') %}<p><strong>Information still needed</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['missing_information'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+      {% if review['reviewed_assessment'].get('steps') %}<p><strong>Corrected actions</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['steps'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+      {% if review['reviewed_assessment'].get('follow_up_questions') %}<p><strong>Reporter questions</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['follow_up_questions'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+      <p><strong>Reviewed uncertainty:</strong> {{ review['reviewed_assessment'].get('uncertainty', '') }}</p>
+      {% if review['notes'] %}<p class="muted">{{ review['notes'] }}</p>{% endif %}
+      <details>
+        <summary>Compare with original AI assessment</summary>
+        <p><strong>Original:</strong> {{ review['original_assessment'].get('summary', '') }}</p>
+        <p><strong>Officer-reviewed:</strong> {{ review['reviewed_assessment'].get('summary', '') }}</p>
+      </details>
+      {% if review['reviewed_assessment'].get('hypotheses') %}
+      <ul class="assessment-list">{% for hypothesis in review['reviewed_assessment']['hypotheses'] %}<li><strong>{{ hypothesis['disposition']|title }}:</strong> {{ hypothesis['assessment'] }}</li>{% endfor %}</ul>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+<details class="panel audit-panel">
+  <summary><strong>Case history</strong> · {{ events|length }} recorded events</summary>
+  <ol class="audit-list">{% for event in events %}<li><time>{{ event['created_at'] }}</time><strong>{{ event['event_type']|replace('_',' ')|title }}</strong><span>by {{ event['actor'] }}</span>{% if event['details'].get('decision') %}<span>Decision: {{ event['details']['decision']|replace('_',' ')|title }}</span>{% endif %}{% if event['details'].get('outcome') %}<p>{{ event['details']['outcome'] }}</p>{% endif %}</li>{% else %}<li>No history recorded.</li>{% endfor %}</ol>
+</details>
 <section class="panel tasks-panel">
-  <div class="panel-head"><div><p class="eyebrow">FOLLOW-THROUGH</p><h2>Tasks for this case</h2></div><span class="muted">{{ tasks|selectattr('status','equalto','Completed')|list|length }} / {{ tasks|length }} complete</span></div>
-  {% if tasks %}<div class="task-list">{% for t in tasks %}<div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}">{{ t['title'] }}</div><form method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}"><button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Mark done{% endif %}</button></form></div>{% endfor %}</div>{% else %}<p class="muted">No follow-up tasks.</p>{% endif %}
+  <div class="panel-head">
+    <div><p class="eyebrow">FOLLOW-THROUGH</p><h2>Tasks for this case</h2></div>
+    <span class="muted">{{ tasks|selectattr('status','equalto','Completed')|list|length }} / {{ tasks|length }} complete</span>
+  </div>
+  {% if tasks %}
+  <div class="task-list">
+    {% for t in tasks %}
+    <div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}"><strong>{{ t['title'] }}</strong>{% if t['due_date'] %}<small> · Due {{ t['due_date'] }}</small>{% endif %}{% if t['status']=='Completed' and t['outcome'] %}<p class="task-outcome">Outcome: {{ t['outcome'] }}</p>{% endif %}</div><form class="task-action-form" method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}">{% if t['status']=='Pending' %}<label>What happened?<textarea name="outcome" rows="2" maxlength="2000" required placeholder="Record the field team's result"></textarea></label>{% endif %}<button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Complete{% endif %}</button></form></div>
+    {% endfor %}
+  </div>
+  {% else %}<p class="muted">No follow-up tasks.</p>{% endif %}
+  <form class="add-task-form" method="post" action="{{ url_for('add_task', case_id=case['id']) }}">
+    <label>New field action<input name="title" maxlength="200" required placeholder="e.g. Visit affected field and record extent"></label>
+    <label>Due date<input name="due_date" type="date"></label>
+    <button class="button secondary" type="submit">Add action</button>
+  </form>
 </section>
 {% endblock %}

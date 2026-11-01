@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Intelligence Cases · FarmOps AI{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">UNDERSTAND · RULE-BASED CANDIDATES</p><h1>Intelligence cases</h1><p class="lead">Potentially related reports are grouped by crop, issue category, reported date, and proximity. Clusters prioritize review; they do not establish an outbreak.</p></div>
+<div class="notice"><strong>How linkage works:</strong> reports must share crop and issue category; every pair must be within 30 km and within 14 days. The 0–100 linkage signal starts at 25, adds up to 25 for report count, up to 25 for proximity, and up to 25 for time proximity. It is a transparent review-priority heuristic, not a probability or disease confidence.</div>
+{% if clusters %}
+<section class="cluster-list">{% for cluster in clusters %}
+<article class="panel cluster-card">
+  <div class="panel-head"><div><p class="eyebrow">POTENTIAL RISK CLUSTER · {{ loop.index }}</p><h2>{{ cluster['crop'] }} · {{ cluster['issue_type'] }}</h2></div><span class="signal-pill">{{ cluster['signal_label'] }} · {{ cluster['signal'] }}/100</span></div>
+  <p>{{ cluster['explanation'] }}</p>
+  <div class="cluster-metrics"><span><strong>{{ cluster['count'] }}</strong> reports</span><span><strong>{{ cluster['max_distance_km'] }} km</strong> max pair distance</span><span><strong>{{ cluster['day_span'] }} days</strong> time span</span></div>
+  <ul class="cluster-reports">{% for report in cluster['reports'] %}<li><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['farm_name'] }}</a><span>{{ report['district'] }} · {{ report['observed_at'] }} · {{ report['review_status'] }}</span></li>{% endfor %}</ul>
+</article>
+{% endfor %}</section>
+{% else %}<div class="empty"><h3>No spatially linkable reports</h3><p>Reports need coordinates and dates before candidate clusters can be evaluated.</p></div>{% endif %}
+<section class="panel unclustered-panel"><p class="eyebrow">UNCLUSTERED OPEN REPORTS</p><h2>Individual observations</h2>
+{% if unclustered %}<ul class="insight-list">{% for case in unclustered[:12] %}<li><a href="{{ url_for('case_detail', case_id=case['id']) }}">Case #{{ case['id'] }} · {{ case['district'] }} · {{ case['crop'] }}</a><span>{{ 'Coordinates missing' if case['latitude'] is none or case['longitude'] is none else 'No matching reports in the time/distance window' }}</span></li>{% endfor %}</ul>{% else %}<p class="muted">Every eligible open report is in a potential cluster.</p>{% endif %}
+</section>
+{% endblock %}

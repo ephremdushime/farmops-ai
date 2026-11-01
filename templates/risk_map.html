@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Risk Map · FarmOps AI{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">SPATIAL INTELLIGENCE · SYNTHETIC OR USER-REPORTED POINTS</p><h1>Risk map</h1><p class="lead">Maps approximate report locations and potential linkage centroids. Exact locations should be collected only when appropriate.</p></div>
+<div class="notice"><strong>Privacy:</strong> the background map is served by OpenStreetMap tile providers when online. The map uses recorded approximate report coordinates; do not enter sensitive locations into an unauthenticated demo.</div>
+<section class="panel map-panel">
+  <div id="risk-map" role="application" aria-label="Map of geolocated field reports and potential clusters"></div>
+  <p class="map-fallback muted" id="map-fallback">Interactive map requires an internet connection. Use the report list below in offline or restricted environments.</p>
+  <div class="map-legend"><span><i class="legend-dot report-dot"></i>Field report</span><span><i class="legend-dot cluster-dot"></i>Potential cluster centroid</span></div>
+</section>
+<section class="panel">
+  <p class="eyebrow">CANDIDATE CLUSTERS</p><h2>Explainable linkage signals</h2>
+  {% if clusters %}<ul class="cluster-reports">{% for cluster in clusters %}<li><a href="{{ url_for('intelligence_cases') }}">{{ cluster['crop'] }} · {{ cluster['count'] }} related reports · {{ cluster['signal_label'] }}</a><span>{{ cluster['explanation'] }}</span></li>{% endfor %}</ul>{% else %}<p class="muted">No potential clusters from the available coordinates.</p>{% endif %}
+</section>
+<section class="panel">
+  <p class="eyebrow">REPORT INDEX</p><h2>Geolocated unresolved reports</h2>
+  {% if reports %}<ul class="insight-list">{% for report in reports if report['latitude'] is not none and report['longitude'] is not none %}<li><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['district'] }} · {{ report['crop'] }}</a><span>{{ report['observed_at'] }} · {{ report['latitude'] }}, {{ report['longitude'] }}</span></li>{% else %}<li><span>No reports with coordinates are available.</span></li>{% endfor %}</ul>{% endif %}
+</section>
+<script id="risk-geojson" type="application/json">{{ geojson|tojson }}</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='risk_map.js') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Verification Centre · FarmOps AI{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">HUMAN VERIFICATION</p><h1>Verification centre</h1><p class="lead">AI output is a hypothesis. Officers decide what is verified and what action is appropriate.</p></div>
+<div class="notice">Queue order uses the AI-suggested urgency first and then the oldest observation date. Urgency is unverified until an officer reviews the report.</div>
+{% if prioritized %}
+<div class="verification-queue">{% for entry in prioritized %}
+<article class="panel queue-card">
+  <div class="panel-head"><div><p class="eyebrow">PRIORITY {{ loop.index }}</p><h2><a href="{{ url_for('case_detail', case_id=entry['case']['id']) }}">Case #{{ entry['case']['id'] }} · {{ entry['case']['farm_name'] }}</a></h2></div><span class="pill">{{ entry['case']['review_status'] }}</span></div>
+  <p>{{ entry['case']['crop'] }} · {{ entry['case']['issue_type'] }} · {{ entry['case']['district'] }} · {{ entry['case']['observed_at'] }}{% if entry['case']['is_synthetic'] %} · SYNTHETIC DEMO{% endif %}</p>
+  <p>{{ entry['case']['description']|truncate(220) }}</p>
+  <div class="queue-priority"><strong>Why prioritized</strong><ul>{% for reason in entry['reasons'] %}<li>{{ reason }}</li>{% endfor %}</ul><span>Report completeness: {{ entry['evidence_completeness'] }}% (not diagnosis confidence)</span></div>
+  <a class="button primary" href="{{ url_for('case_detail', case_id=entry['case']['id']) }}#officer-review">Review evidence</a>
+</article>
+{% endfor %}</div>
+{% else %}<div class="empty"><h3>Verification queue clear</h3><p>No open reports currently await officer review.</p></div>{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Response Operations · FarmOps AI{% endblock %}
+{% block content %}
+<div class="page-heading"><p class="eyebrow">COORDINATED RESPONSE</p><h1>Response operations</h1><p class="lead">Track assigned field actions, due dates, and recorded outcomes.</p></div>
+<section class="panel"><form class="filter-form" method="get"><label>Action state<select name="status"><option value="Pending" {% if selected_status=='Pending' %}selected{% endif %}>Pending</option><option value="Completed" {% if selected_status=='Completed' %}selected{% endif %}>Completed</option><option value="All" {% if selected_status=='All' %}selected{% endif %}>All actions</option></select></label><button class="button secondary" type="submit">Filter actions</button></form></section>
+{% if tasks %}<div class="operation-list">{% for task in tasks %}
+<article class="panel operation-card"><div class="panel-head"><div><p class="eyebrow">{{ task['district'] }} · {{ task['crop'] }}</p><h2>{{ task['title'] }}</h2></div><span class="pill">{{ task['status'] }}</span></div>
+<p><a href="{{ url_for('case_detail', case_id=task['case_number']) }}">Case #{{ task['case_number'] }} · {{ task['farm_name'] }} · {{ task['location'] }}</a></p>
+{% if task['due_date'] %}<p><strong>Due:</strong> {{ task['due_date'] }}</p>{% endif %}
+{% if task['outcome'] %}<p><strong>Recorded outcome:</strong> {{ task['outcome'] }}</p>{% endif %}
+{% if task['status']=='Pending' %}<form class="operation-complete" method="post" action="{{ url_for('toggle_task', task_id=task['id']) }}"><label>Record field outcome before completing<textarea name="outcome" rows="2" maxlength="2000" required></textarea></label><button class="button primary" type="submit">Complete action</button></form>{% endif %}
+</article>
+{% endfor %}</div>{% else %}<div class="empty"><h3>No {{ selected_status|lower }} actions</h3><p>Field actions appear here after they are created on a case.</p></div>{% endif %}
+{% endblock %}
