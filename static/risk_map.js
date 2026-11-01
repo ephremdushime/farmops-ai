@@ -10,7 +10,7 @@
     const map = L.map(mapElement).setView([-1.94, 29.87], 8);
     let tileErrors = 0;
     let tileFallbackUsed = false;
-    const basemapAttribution = "&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>";
+    const basemapAttribution = "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors &copy; <a href='https://carto.com/attributions'>CARTO</a>";
     const basemapUrl = () =>
       document.documentElement.dataset.theme === "dark"
         ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
