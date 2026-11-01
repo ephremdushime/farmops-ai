@@ -2,16 +2,19 @@
 {% block title %}Operations Centre · FarmOps AI{% endblock %}
 {% block page_context %}Overview{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
 {% endblock %}
 {% block content %}
-<section class="hero">
+<section class="hero ops-hero">
   <div>
     <p class="eyebrow">National Agricultural Intelligence Operations Centre</p>
     <h1>Field intelligence, <em>ready for action.</em></h1>
     <p class="lead">A coordinated view of reported evidence, emerging spatial signals, and officer-verified response across Rwanda.</p>
   </div>
-  <a class="button primary" href="{{ url_for('new_case') }}">＋ Submit observation</a>
+  <div class="hero-actions">
+    <a class="button primary" href="{{ url_for('new_case') }}">＋ Submit observation</a>
+    <span class="hero-live"><i class="live-dot" aria-hidden="true"></i>{{ unresolved_cases }} open · {{ pending_reviews }} awaiting review</span>
+  </div>
 </section>
 
 <div class="system-notice" role="status">
@@ -22,12 +25,73 @@
 <div class="notice demo-notice"><strong>Synthetic demonstration data:</strong> {{ synthetic_count }} reports are labelled as fictional UI scenarios. They are not real agricultural statistics, validated outbreak detections, or government data.</div>
 {% endif %}
 
-<section class="stats" aria-label="Operational metrics">
-  <div class="stat"><div class="stat-label"><span>Reports recorded</span><i aria-hidden="true"></i></div><strong>{{ cases|length }}</strong><small>All report records</small></div>
-  <div class="stat"><div class="stat-label"><span>Open response</span><i aria-hidden="true"></i></div><strong>{{ unresolved_cases }}</strong><small>Not marked resolved</small></div>
-  <div class="stat warning"><div class="stat-label"><span>Awaiting verification</span><i aria-hidden="true"></i></div><strong>{{ pending_reviews }}</strong><small>Officer review required</small></div>
-  <div class="stat warning"><div class="stat-label"><span>Actions pending</span><i aria-hidden="true"></i></div><strong>{{ task_counts['pending'] or 0 }}</strong><small>Field follow-through</small></div>
-  <div class="stat"><div class="stat-label"><span>Actions completed</span><i aria-hidden="true"></i></div><strong>{{ task_counts['completed'] or 0 }}</strong><small>Outcome recorded</small></div>
+<section class="stats ops-stats" aria-label="Operational metrics">
+  <a class="stat" href="{{ url_for('field_reports') }}" aria-label="Reports recorded: open linked view"><div class="stat-label"><span>Reports recorded</span><i aria-hidden="true"></i></div><strong>{{ cases|length }}</strong><small>All report records</small></a>
+  <a class="stat" href="{{ url_for('field_reports') }}" aria-label="Open response: open linked view"><div class="stat-label"><span>Open response</span><i aria-hidden="true"></i></div><strong>{{ unresolved_cases }}</strong><small>Not marked resolved</small></a>
+  <a class="stat warning" href="{{ url_for('verification_centre') }}" aria-label="Awaiting verification: open linked view"><div class="stat-label"><span>Awaiting verification</span><i aria-hidden="true"></i></div><strong>{{ pending_reviews }}</strong><small>Officer review required</small></a>
+  <a class="stat warning" href="{{ url_for('response_operations') }}" aria-label="Actions pending: open linked view"><div class="stat-label"><span>Actions pending</span><i aria-hidden="true"></i></div><strong>{{ task_counts['pending'] or 0 }}</strong><small>Field follow-through</small></a>
+  <a class="stat" href="{{ url_for('response_operations') }}?status=Completed" aria-label="Actions completed: open linked view"><div class="stat-label"><span>Actions completed</span><i aria-hidden="true"></i></div><strong>{{ task_counts['completed'] or 0 }}</strong><small>Outcome recorded</small></a>
+  <a class="stat" href="{{ url_for('intelligence_cases') }}" aria-label="Active signals: open linked view"><div class="stat-label"><span>Active signals</span><i aria-hidden="true"></i></div><strong>{{ risk_clusters|length }}</strong><small>Candidate groupings</small></a>
+</section>
+
+<section class="analytics-grid" aria-label="Intake analytics">
+  <article class="panel trend-panel">
+    <div class="feed-heading">
+      <div><p class="eyebrow">INTAKE VELOCITY</p><h2>Reports per day</h2></div>
+      <div class="window-toggle" role="group" aria-label="Trend window">
+        <button type="button" data-days="7" aria-pressed="false">7d</button>
+        <button type="button" data-days="14" class="active" aria-pressed="true">14d</button>
+      </div>
+    </div>
+    <div class="chart" id="intake-chart" role="img" aria-label="Daily intake chart for the last 14 days"></div>
+    <p class="chart-foot"><strong>{{ intake_trend|sum(attribute='total') }}</strong> reports in the last 14 days · <strong>{{ intake_trend|sum(attribute='urgent') }}</strong> urgent</p>
+    <noscript><table class="trend-table"><thead><tr><th scope="col">Date</th><th scope="col">Reports</th><th scope="col">Urgent</th></tr></thead><tbody>{% for day in intake_trend %}<tr><th scope="row">{{ day['label'] }}</th><td>{{ day['total'] }}</td><td>{{ day['urgent'] }}</td></tr>{% endfor %}</tbody></table></noscript>
+  </article>
+  <div class="analytics-side">
+    <article class="panel mix-panel">
+      <div class="feed-heading"><div><p class="eyebrow">CASELOAD MIX</p><h2>Urgency mix</h2></div></div>
+      {% set mix_total = urgency_mix|sum(attribute='count') %}
+      {% if mix_total %}
+      <div class="stack-bar" role="img" aria-label="Urgency mix across {{ mix_total }} open reports">
+        {% for row in urgency_mix %}{% if row['count'] %}<span class="stack-seg urg-{{ row['level']|lower|replace(' ', '-') }}" style="width: {{ (row['count'] / mix_total * 100)|round(1) }}%" title="{{ row['level'] }}: {{ row['count'] }}"></span>{% endif %}{% endfor %}
+      </div>
+      <ul class="mix-list">
+        {% for row in urgency_mix %}<li><span class="mix-dot urg-{{ row['level']|lower|replace(' ', '-') }}"></span><span>{{ row['level'] }}</span><strong>{{ row['count'] }}</strong></li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No unresolved reports to summarize.</p>
+      {% endif %}
+    </article>
+    <article class="panel rank-panel">
+      <div class="feed-heading"><div><p class="eyebrow">DISTRICT RANKING</p><h2>Open reports by district</h2></div><a href="{{ url_for('field_reports') }}">All reports →</a></div>
+      {% if district_patterns %}
+      {% set top = district_patterns[0]['case_count'] %}
+      <ol class="rank-list">
+        {% for row in district_patterns %}<li><span class="rank-pos">{{ loop.index }}</span><span class="rank-name">{{ row['district'] }}</span><span class="rank-track"><span class="rank-fill" style="width: {{ (row['case_count'] / top * 100)|round(1) }}%"></span></span><strong>{{ row['case_count'] }}</strong></li>{% endfor %}
+      </ol>
+      {% else %}
+      <p class="muted">No unresolved reports with district data.</p>
+      {% endif %}
+    </article>
+  </div>
+</section>
+
+<section class="panel watch-panel" aria-label="Operations watch">
+  <div class="feed-heading"><div><p class="eyebrow">OPERATIONS WATCH</p><h2>Unusual patterns</h2></div><span class="watch-window">Rule-based tripwires \u00b7 14 days</span></div>
+  {% if watch_signals %}
+  <ul class="watch-list">
+    {% for signal in watch_signals %}
+    <li class="watch-{{ signal['level'] }}">
+      <span class="watch-sev">{{ signal['level'] }}</span>
+      <div><strong>{{ signal['title'] }}</strong><p>{{ signal['detail'] }}</p></div>
+      <a href="{{ url_for(signal['endpoint']) }}">Review \u2192</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No unusual patterns in the last 14 days. Intake is within its recent baseline.</p>
+  {% endif %}
+  <p class="watch-note">Tripwires compare recent intake against its own baseline. They prioritize review; they are not predictions or detections of confirmed events.</p>
 </section>
 
 <section class="overview-grid" aria-label="Live field intelligence">
@@ -41,7 +105,7 @@
       <p class="map-fallback" id="overview-map-fallback">Interactive basemap requires an internet connection. Report locations are approximate; use the field reports index if tiles are unavailable.</p>
     </div>
     <div class="map-legend"><span><i class="legend-dot report-dot"></i>Field report</span><span><i class="legend-dot cluster-dot"></i>Potential cluster centroid</span><span>Markers use recorded coordinates</span></div>
-    <p class="map-attribution-note">Map tiles are requested from OpenStreetMap in your browser. Spatial groupings are candidate links, not confirmed risks.</p>
+    <p class="map-attribution-note">Dark basemap © CARTO, map data © OpenStreetMap contributors. Spatial groupings are candidate links, not confirmed risks.</p>
   </article>
   <aside class="panel feed-panel" aria-labelledby="feed-title">
     <div class="feed-heading"><div><p class="eyebrow">PRIORITIZED INTAKE</p><h2 id="feed-title">Field intelligence feed</h2></div><a href="{{ url_for('field_reports') }}">All reports →</a></div>
@@ -115,9 +179,11 @@
   <ul class="verified-list">{% for row in verified_observations[:5] %}<li><p>{{ row['observation'] }}</p><small>{{ row['crop'] }} · {{ row['location'] }} · reviewed by {{ row['reviewer'] }}{% if row['is_synthetic'] %} · SYNTHETIC DEMO{% endif %}</small></li>{% endfor %}</ul>
 </section>
 {% endif %}
+<script id="trend-data" type="application/json">{{ intake_trend|tojson }}</script>
 <script id="overview-geojson" type="application/json">{{ geojson|tojson }}</script>
 {% endblock %}
 {% block scripts %}
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
 <script src="{{ url_for('static', filename='risk_map.js') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
 {% endblock %}

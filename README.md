@@ -94,7 +94,7 @@ The app uses the OpenAI Python SDK with Meta's OpenAI-compatible base URL `https
 
 When configured, only crop, issue category, observation date, and description are sent from the report fields; reporter/farm names and location metadata are excluded, with matching identifiers redacted from the description. Photos are sent for analysis after EXIF and other image metadata are removed; the original photo remains stored locally. Visible people, labels, and personal details in the description or image pixels are not automatically redacted, so use synthetic or appropriately consented evidence. The case page permanently records whether its assessment came from Meta, demo mode, fallback mode, or synthetic demo data, and shows the returned model ID when available. API logs record the model on success and the exception type on fallback, not the prompt or API key.
 
-The `python test_meta_api.py` smoke test reads credentials from `.env` or the process environment, makes one generic request, and never prints the key or full error response. It exits without making a network request if no key is configured. The map uses Leaflet and OpenStreetMap tile services; map tiles are requested by the user's browser.
+The `python test_meta_api.py` smoke test reads credentials from `.env` or the process environment, makes one generic request, and never prints the key or full error response. It exits without making a network request if no key is configured. The map uses Leaflet with a dark CARTO basemap over OpenStreetMap data; map tiles are requested by the user's browser.
 
 ## Demo cases
 

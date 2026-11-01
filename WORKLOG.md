@@ -52,6 +52,15 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - Reworked the manual API smoke script to use environment credentials only, avoid printing keys or full error bodies, and skip network access when no key is configured.
 - Validation: 18 tests passed; Python compilation and `git diff --check` passed. Live API request skipped because there is no `.env` and `MODEL_API_KEY` is not set in the process environment.
 
+## 2026-11-01 — Live Meta API fire test (key rejected)
+- First real Meta request attempt returned HTTP 401; the app correctly fell back with labeled output and a log line.
+- `.env` format verified clean without viewing the key; awaiting a valid key from the Meta dashboard.
+
+## 2026-11-01 — Flagship overview analytics interface
+- Rebuilt the overview as a dark operations dashboard: intake-velocity chart (7/14-day toggle), urgency mix, district ranking, dark basemap.
+- Added pure analytics helpers with unit coverage.
+- Validation: `python -m unittest` — 23 tests passed; all pages verified live.
+
 ## Next validation steps
 - [ ] Confirm Meta Model API key and model access.
 - [ ] Test the first real model request.

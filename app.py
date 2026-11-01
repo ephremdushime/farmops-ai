@@ -689,6 +689,151 @@ def _assessment_from_case(case):
     return assessment
 
 
+URGENCY_ORDER = ("Urgent field review", "Soon", "Needs review", "Routine")
+INTAKE_TREND_DAYS = 14
+
+
+def _case_day(case):
+    day_text = (case.get("observed_at") or "")[:10]
+    if not day_text:
+        day_text = (case.get("created_at") or "")[:10]
+    try:
+        return datetime.strptime(day_text, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def build_intake_trend(cases, days=INTAKE_TREND_DAYS, today=None):
+    """Bucket reports per day for the last `days` days ending `today` (UTC)."""
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    buckets = [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+    totals = {day: 0 for day in buckets}
+    urgent = {day: 0 for day in buckets}
+    for raw_case in cases:
+        case = dict(raw_case)
+        day = _case_day(case)
+        if day not in totals:
+            continue
+        totals[day] += 1
+        if case.get("urgency") == "Urgent field review":
+            urgent[day] += 1
+    return [
+        {
+            "date": day.isoformat(),
+            "label": day.strftime("%d %b"),
+            "total": totals[day],
+            "urgent": urgent[day],
+        }
+        for day in buckets
+    ]
+
+
+def build_urgency_mix(cases):
+    """Count reports per urgency level in fixed severity order."""
+    counts = {level: 0 for level in URGENCY_ORDER}
+    for raw_case in cases:
+        level = dict(raw_case).get("urgency")
+        if level in counts:
+            counts[level] += 1
+    return [{"level": level, "count": counts[level]} for level in URGENCY_ORDER]
+
+
+WATCH_SPIKE_DAYS = 3
+WATCH_BASELINE_DAYS = 11
+WATCH_NEW_DISTRICT_DAYS = 7
+
+
+def build_watch_signals(cases, clusters, today=None):
+    """Flag unusual intake patterns with simple baseline rules.
+
+    Returns at most four signals ordered by severity. Each signal carries a
+    Flask endpoint name so templates can link it without extra queries.
+    These are review tripwires, not predictions or confirmed detections.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    signals = []
+    trend = build_intake_trend(
+        cases, days=WATCH_SPIKE_DAYS + WATCH_BASELINE_DAYS, today=today
+    )
+    baseline_days = trend[:WATCH_BASELINE_DAYS]
+    recent_days = trend[WATCH_BASELINE_DAYS:]
+    baseline_total = sum(day["total"] for day in baseline_days)
+    recent_total = sum(day["total"] for day in recent_days)
+    expected = baseline_total / len(baseline_days) * len(recent_days)
+    threshold = max(4, round(expected * 2))
+    if recent_total >= threshold:
+        signals.append({
+            "level": "elevated" if recent_total >= threshold * 2 else "watch",
+            "title": "Intake spike",
+            "detail": (
+                f"{recent_total} reports in the last {len(recent_days)} days "
+                f"against a baseline of about {expected / len(recent_days):.1f} per day."
+            ),
+            "endpoint": "field_reports",
+        })
+    urgent = 0
+    for raw_case in cases:
+        case = dict(raw_case)
+        if case.get("urgency") == "Urgent field review" and case.get("status") != "Resolved":
+            urgent += 1
+    if urgent >= 2:
+        signals.append({
+            "level": "elevated" if urgent >= 4 else "watch",
+            "title": "Urgent field reviews pending",
+            "detail": (
+                f"{urgent} unresolved reports are flagged for urgent field review. "
+                "Officer confirmation is required before action."
+            ),
+            "endpoint": "verification_centre",
+        })
+    cutoff = today - timedelta(days=WATCH_NEW_DISTRICT_DAYS)
+    old_districts = set()
+    new_districts = set()
+    for raw_case in cases:
+        case = dict(raw_case)
+        district = (case.get("district") or "").strip()
+        day = _case_day(case)
+        if not district or day is None:
+            continue
+        if day < cutoff:
+            old_districts.add(district)
+        elif day <= today:
+            new_districts.add(district)
+    emerging = sorted(new_districts - old_districts)[:3]
+    if emerging:
+        signals.append({
+            "level": "watch",
+            "title": (
+                "First reports from new districts"
+                if len(emerging) > 1
+                else "First reports from a new district"
+            ),
+            "detail": "Recent intake includes: " + ", ".join(emerging) + ".",
+            "endpoint": "field_reports",
+        })
+    ranked = sorted(
+        (dict(cluster) for cluster in clusters),
+        key=lambda cluster: cluster.get("signal", 0),
+        reverse=True,
+    )[:2]
+    for cluster in ranked:
+        if cluster.get("signal", 0) >= 70:
+            signals.append({
+                "level": "elevated" if cluster.get("signal", 0) >= 85 else "watch",
+                "title": (
+                    f"{cluster.get('signal_label', 'Cluster signal')}: "
+                    f"{cluster.get('crop', '?')} \u00b7 {cluster.get('count', 0)} reports"
+                ),
+                "detail": cluster.get("explanation", ""),
+                "endpoint": "intelligence_cases",
+            })
+    rank = {"elevated": 0, "watch": 1}
+    signals.sort(key=lambda signal: rank.get(signal["level"], 2))
+    return signals[:4]
+
+
 @app.route("/")
 def index():
     with db() as conn:
@@ -726,6 +871,14 @@ def index():
             GROUP BY crop, issue_type
             ORDER BY case_count DESC, crop, issue_type
             LIMIT 5
+        """).fetchall()
+        district_patterns = conn.execute("""
+            SELECT district, COUNT(*) AS case_count
+            FROM cases
+            WHERE status != 'Resolved' AND district != ''
+            GROUP BY district
+            ORDER BY case_count DESC, district
+            LIMIT 6
         """).fetchall()
         verified_cases = conn.execute("""
             SELECT c.crop, c.location, c.is_synthetic, r.reviewer, r.reviewed_assessment
@@ -785,6 +938,10 @@ def index():
         verified_observations=verified_observations[:8],
         risk_clusters=risk_clusters,
         geojson=_risk_map_geojson(cluster_candidates, risk_clusters),
+        district_patterns=district_patterns,
+        intake_trend=build_intake_trend(cases),
+        urgency_mix=build_urgency_mix(cluster_candidates),
+        watch_signals=build_watch_signals(cases, risk_clusters),
     )
 
 

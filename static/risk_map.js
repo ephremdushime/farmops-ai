@@ -8,15 +8,23 @@
     const features = data.features || [];
     const points = features.filter((feature) => feature.geometry?.type === "Point");
     const map = L.map(mapElement).setView([-1.94, 29.87], 8);
-    const tileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 18,
-      attribution: "&copy; OpenStreetMap contributors",
+    let tileErrors = 0;
+    let tileFallbackUsed = false;
+    const tileLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19,
+      attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors &copy; <a href=\"https://carto.com/attributions\">CARTO</a>",
     });
     tileLayer.on("tileerror", () => {
-      if (!fallback) return;
-      fallback.hidden = false;
-      fallback.textContent =
-        "Basemap tiles are unavailable. Report markers and the location list remain available; check connectivity to OpenStreetMap.";
+      tileErrors += 1;
+      if (tileErrors === 4 && !tileFallbackUsed) {
+        tileFallbackUsed = true;
+        tileLayer.setUrl("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png");
+        return;
+      }
+      if (tileErrors >= 12 && fallback) {
+        fallback.hidden = false;
+        fallback.textContent = "Basemap tiles are unavailable. Report markers and the location list remain available; check connectivity.";
+      }
     });
     tileLayer.addTo(map);
     if (fallback) fallback.hidden = true;
@@ -28,8 +36,8 @@
       const cluster = properties.kind === "potential_cluster";
       const marker = L.circleMarker([latitude, longitude], {
         radius: cluster ? 12 : 7,
-        color: cluster ? "#963f30" : "#15583f",
-        fillColor: cluster ? "#df896c" : "#54a97a",
+        color: cluster ? "#a33e2c" : "#1f7a4d",
+        fillColor: cluster ? "#e07864" : "#4cc38a",
         fillOpacity: 0.82,
         weight: cluster ? 3 : 1,
       }).addTo(map);

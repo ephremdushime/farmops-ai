@@ -661,6 +661,112 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertTrue(result["mode"].startswith("DEMO MODE"))
         openai_client.assert_not_called()
 
+    def test_intake_trend_buckets_reports_by_observed_day(self):
+        trend = self.module.build_intake_trend(
+            [
+                {"observed_at": "2026-10-30", "created_at": "2026-10-30T00:00:00Z", "urgency": "Soon"},
+                {"observed_at": "2026-10-30", "created_at": "2026-10-30T00:00:00Z", "urgency": "Urgent field review"},
+                {"observed_at": "", "created_at": "2026-10-29T00:00:00Z", "urgency": "Routine"},
+                {"observed_at": "not-a-date", "created_at": "also-bad", "urgency": "Soon"},
+            ],
+            days=3,
+            today=self.module.datetime(2026, 10, 30).date(),
+        )
+        self.assertEqual([day["date"] for day in trend], ["2026-10-28", "2026-10-29", "2026-10-30"])
+        self.assertEqual(trend[2]["total"], 2)
+        self.assertEqual(trend[2]["urgent"], 1)
+        self.assertEqual(trend[1]["total"], 1)
+        self.assertEqual(trend[0]["total"], 0)
+
+    def test_urgency_mix_uses_fixed_severity_order(self):
+        mix = self.module.build_urgency_mix([
+            {"urgency": "Routine"},
+            {"urgency": "Soon"},
+            {"urgency": "Soon"},
+            {"urgency": "Bogus"},
+        ])
+        self.assertEqual(
+            [(row["level"], row["count"]) for row in mix],
+            [("Urgent field review", 0), ("Soon", 2), ("Needs review", 0), ("Routine", 1)],
+        )
+
+    def test_overview_exposes_analytics_data(self):
+        self.create_case()
+        overview = self.client.get("/")
+        self.assertEqual(overview.status_code, 200)
+        self.assertIn(b"trend-data", overview.data)
+        self.assertIn(b"DISTRICT RANKING", overview.data)
+        self.assertIn(b"Urgency mix", overview.data)
+        self.assertIn(b"OPERATIONS WATCH", overview.data)
+        self.assertIn(b"First reports from", overview.data)
+
+    def test_watch_signals_flag_intake_spike(self):
+        day = self.module.datetime(2026, 11, 1).date()
+        cases = [
+            {"observed_at": "2026-10-31", "created_at": "2026-10-31T00:00:00Z",
+             "urgency": "Soon", "status": "Open", "district": "Same District"},
+            {"observed_at": "2026-11-01", "created_at": "2026-11-01T00:00:00Z",
+             "urgency": "Soon", "status": "Open", "district": "Same District"},
+            {"observed_at": "2026-11-01", "created_at": "2026-11-01T00:00:00Z",
+             "urgency": "Soon", "status": "Open", "district": "Same District"},
+            {"observed_at": "2026-10-30", "created_at": "2026-10-30T00:00:00Z",
+             "urgency": "Soon", "status": "Open", "district": "Same District"},
+            {"observed_at": "2026-10-30", "created_at": "2026-10-30T00:00:00Z",
+             "urgency": "Soon", "status": "Open", "district": "Same District"},
+            {"observed_at": "2026-10-20", "created_at": "2026-10-20T00:00:00Z",
+             "urgency": "Routine", "status": "Open", "district": "Same District"},
+        ]
+        signals = self.module.build_watch_signals(cases, [], today=day)
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0]["title"], "Intake spike")
+        self.assertEqual(signals[0]["level"], "watch")
+        self.assertEqual(signals[0]["endpoint"], "field_reports")
+
+    def test_watch_signals_flag_urgent_backlog_and_new_district(self):
+        day = self.module.datetime(2026, 11, 1).date()
+        cases = [
+            {"observed_at": "2026-11-01", "created_at": "2026-11-01T00:00:00Z",
+             "urgency": "Urgent field review", "status": "Open", "district": "Old District"},
+            {"observed_at": "2026-11-01", "created_at": "2026-11-01T00:00:00Z",
+             "urgency": "Urgent field review", "status": "Open", "district": "Old District"},
+            {"observed_at": "2026-10-10", "created_at": "2026-10-10T00:00:00Z",
+             "urgency": "Routine", "status": "Open", "district": "Old District"},
+            {"observed_at": "2026-11-01", "created_at": "2026-11-01T00:00:00Z",
+             "urgency": "Soon", "status": "Open", "district": "Brand New District"},
+        ]
+        signals = self.module.build_watch_signals(cases, [], today=day)
+        self.assertEqual(
+            [signal["title"] for signal in signals],
+            ["Urgent field reviews pending", "First reports from a new district"],
+        )
+
+    def test_watch_signals_flag_strong_cluster(self):
+        day = self.module.datetime(2026, 11, 1).date()
+        signals = self.module.build_watch_signals(
+            [],
+            [{"signal": 90, "signal_label": "Strong linkage signal",
+              "crop": "Maize", "count": 8, "explanation": "Eight linked reports."}],
+            today=day,
+        )
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0]["level"], "elevated")
+        self.assertEqual(signals[0]["endpoint"], "intelligence_cases")
+        self.assertIn("Maize", signals[0]["title"])
+
+    def test_watch_signals_quiet_when_baseline_calms(self):
+        day = self.module.datetime(2026, 11, 1).date()
+        signals = self.module.build_watch_signals(
+            [
+                {"observed_at": "2026-10-01", "created_at": "2026-10-01T00:00:00Z",
+                 "urgency": "Routine", "status": "Open", "district": "Known District"},
+                {"observed_at": "2026-11-01", "created_at": "2026-11-01T00:00:00Z",
+                 "urgency": "Routine", "status": "Open", "district": "Known District"},
+            ],
+            [],
+            today=day,
+        )
+        self.assertEqual(signals, [])
+
     def test_existing_database_is_migrated_without_losing_cases(self):
         old_db_path = Path(self.temp_dir.name) / "old-farmops.db"
         with closing(sqlite3.connect(old_db_path)) as conn:
