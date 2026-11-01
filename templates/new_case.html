@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}New case · FarmOps AI{% endblock %}
+{% block page_context %}New Observation{% endblock %}
 {% block content %}
-<div class="page-heading"><a class="back" href="{{ url_for('field_reports') }}">← Field reports</a><p class="eyebrow">FIELD OBSERVATION</p><h1>Report field evidence</h1><p class="lead">Record what was observed and where. Coordinates are optional but help identify nearby reports; don't estimate them.</p></div>
+<div class="page-heading"><div><a class="back" href="{{ url_for('field_reports') }}">← Field reports</a><p class="eyebrow">FIELD OBSERVATION · EVIDENCE INTAKE</p><h1>Report field evidence</h1><p class="lead">Capture the observation and its context. Record what was seen separately from assumptions; coordinates are optional and should never be estimated.</p></div></div>
 <form class="form-card" method="post" enctype="multipart/form-data">
   <div class="form-grid">
     <label>Farm or cooperative name<input required name="farm_name" value="{{ data.get('farm_name','') }}" placeholder="e.g. Nyamata Demo Farm"></label>

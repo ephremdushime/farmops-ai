@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Response Operations · FarmOps AI{% endblock %}
+{% block page_context %}Response Operations{% endblock %}
 {% block content %}
-<div class="page-heading"><p class="eyebrow">COORDINATED RESPONSE</p><h1>Response operations</h1><p class="lead">Track assigned field actions, due dates, and recorded outcomes.</p></div>
+<div class="page-heading"><div><p class="eyebrow">FIELD EXECUTION · TRACKED OUTCOMES</p><h1>Response operations</h1><p class="lead">Coordinate field actions against a report, track due dates, and record what the team found.</p></div><span class="queue-count"><strong>{{ tasks|length }}</strong><small>{{ selected_status|lower }} actions</small></span></div>
 <section class="panel"><form class="filter-form" method="get"><label>Action state<select name="status"><option value="Pending" {% if selected_status=='Pending' %}selected{% endif %}>Pending</option><option value="Completed" {% if selected_status=='Completed' %}selected{% endif %}>Completed</option><option value="All" {% if selected_status=='All' %}selected{% endif %}>All actions</option></select></label><button class="button secondary" type="submit">Filter actions</button></form></section>
 {% if tasks %}<div class="operation-list">{% for task in tasks %}
 <article class="panel operation-card"><div class="panel-head"><div><p class="eyebrow">{{ task['district'] }} · {{ task['crop'] }}</p><h2>{{ task['title'] }}</h2></div><span class="pill">{{ task['status'] }}</span></div>

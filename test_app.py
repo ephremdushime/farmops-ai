@@ -1,4 +1,5 @@
 import base64
+import re
 import hashlib
 import json
 import importlib
@@ -386,7 +387,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"Awaiting officer review", dashboard.data)
 
     def test_primary_intelligence_pages_render(self):
-        self.create_case()
+        case_id = self.create_case()
         for path in (
             "/",
             "/field-reports",
@@ -398,6 +399,36 @@ class FarmOpsSmokeTests(unittest.TestCase):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
+                self.assertIn(b"primary-sidebar", response.data)
+
+        overview = self.client.get("/")
+        self.assertIn(b"National Agricultural Intelligence Operations Centre", overview.data)
+        self.assertIn(b"Data Sources", overview.data)
+        self.assertIn(b"PLANNED", overview.data)
+        self.assertIn(b"overview-map", overview.data)
+        with self.module.db() as conn:
+            case = conn.execute(
+                "SELECT latitude, longitude FROM cases WHERE id=?", (case_id,)
+            ).fetchone()
+        match = re.search(
+            rb'<script id="overview-geojson" type="application/json">(.*?)</script>',
+            overview.data,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        geojson = json.loads(match.group(1))
+        report_feature = next(
+            feature for feature in geojson["features"]
+            if feature["properties"].get("case_id") == case_id
+        )
+        self.assertEqual(
+            report_feature["geometry"]["coordinates"],
+            [case["longitude"], case["latitude"]],
+        )
+        detail = self.client.get(f"/cases/{case_id}")
+        self.assertIn(b"Source evidence", detail.data)
+        self.assertIn(b"Missing evidence", detail.data)
+        self.assertIn(b"source-demo", detail.data)
 
     def test_spatial_clusters_observe_distance_and_time_limits(self):
         first_id = self.create_case()
@@ -581,6 +612,54 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertEqual(result["mode"], "Fallback mode — Meta API request failed")
         self.assertIn("ValueError", result["uncertainty"])
         self.assertTrue(result["follow_up_questions"])
+
+    def test_blank_model_id_falls_back_to_default(self):
+        payload = {
+            "summary": "A maize report needs field verification.",
+            "urgency": "Soon",
+            "observations": ["Yellowing leaves after heavy rain."],
+            "hypotheses": [],
+            "missing_information": ["Affected area is not known."],
+            "follow_up_questions": ["When did the symptoms first appear?"],
+            "steps": ["Confirm onset.", "Estimate affected area.", "Arrange field review."],
+            "uncertainty": "The report alone cannot establish the cause.",
+        }
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(payload),
+            model="muse-spark-1.3",
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key", "META_MODEL_ID": "  "}):
+            with patch("openai.OpenAI", return_value=client):
+                result = self.module.analyze_with_meta(
+                    {
+                        "farm_name": "Demo Farm",
+                        "reporter_name": "Field Officer",
+                        "location": "Demo District",
+                        "crop": "Maize",
+                        "issue_type": "Visible crop change",
+                        "description": "Yellowing leaves after heavy rain.",
+                    }
+                )
+        self.assertEqual(result["mode"], "Meta Model API")
+        self.assertEqual(client.responses.create.call_args.kwargs["model"], "muse-spark-1.3")
+
+    def test_whitespace_api_key_uses_demo_mode_without_calling_meta(self):
+        with patch.dict(os.environ, {"MODEL_API_KEY": "   "}):
+            with patch("openai.OpenAI") as openai_client:
+                with self.assertLogs("app", level="INFO"):
+                    result = self.module.analyze_with_meta(
+                        {
+                            "farm_name": "Demo Farm",
+                            "reporter_name": "Field Officer",
+                            "location": "Demo District",
+                            "crop": "Maize",
+                            "issue_type": "Visible crop change",
+                            "description": "Yellowing leaves after heavy rain.",
+                        }
+                    )
+        self.assertTrue(result["mode"].startswith("DEMO MODE"))
+        openai_client.assert_not_called()
 
     def test_existing_database_is_migrated_without_losing_cases(self):
         old_db_path = Path(self.temp_dir.name) / "old-farmops.db"

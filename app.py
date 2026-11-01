@@ -54,6 +54,11 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 
+@app.context_processor
+def shared_ui_state():
+    return {"meta_api_configured": bool((os.getenv("MODEL_API_KEY") or "").strip())}
+
+
 @contextmanager
 def db():
     conn = sqlite3.connect(DB_PATH)
@@ -508,7 +513,7 @@ def _demo_assessment(case_data):
 
 def analyze_with_meta(case_data, images=None):
     """Use Meta Model API when configured; otherwise return clearly-labelled demo output."""
-    api_key = os.getenv("MODEL_API_KEY")
+    api_key = (os.getenv("MODEL_API_KEY") or "").strip()
     if not api_key:
         app.logger.info("Meta assessment skipped: no MODEL_API_KEY is configured.")
         return {
@@ -557,7 +562,7 @@ Case data:
                 "type": "input_image",
                 "image_url": f"data:{mime_type};base64,{encoded}",
             })
-        model_id = os.getenv("META_MODEL_ID", DEFAULT_META_MODEL)
+        model_id = (os.getenv("META_MODEL_ID") or DEFAULT_META_MODEL).strip() or DEFAULT_META_MODEL
         response = client.responses.create(
             model=model_id,
             input=[{"role": "user", "content": content}],
@@ -753,9 +758,24 @@ def index():
                         "observation": observation,
                     })
     risk_clusters = build_risk_clusters(cluster_candidates)
+    urgency_rank = {
+        "Urgent field review": 0,
+        "Soon": 1,
+        "Needs review": 2,
+        "Routine": 3,
+    }
+    feed_cases = sorted(
+        (dict(case) for case in cluster_candidates),
+        key=lambda case: (
+            urgency_rank.get(case["urgency"], 4),
+            case["observed_at"] or case["created_at"][:10],
+            case["id"],
+        ),
+    )
     return render_template(
         "index.html",
         cases=cases,
+        feed_cases=feed_cases,
         synthetic_count=synthetic_count,
         task_counts=task_counts,
         pending_reviews=pending_reviews,
@@ -764,6 +784,7 @@ def index():
         risk_patterns=risk_patterns,
         verified_observations=verified_observations[:8],
         risk_clusters=risk_clusters,
+        geojson=_risk_map_geojson(cluster_candidates, risk_clusters),
     )
 
 
@@ -809,23 +830,7 @@ def _unresolved_cases():
         ).fetchall()
 
 
-@app.route("/intelligence")
-def intelligence_cases():
-    cases = _unresolved_cases()
-    clusters = build_risk_clusters(cases)
-    clustered_ids = {
-        report["id"] for cluster in clusters for report in cluster["reports"]
-    }
-    unclustered = [case for case in cases if case["id"] not in clustered_ids]
-    return render_template(
-        "intelligence.html", clusters=clusters, unclustered=unclustered
-    )
-
-
-@app.route("/risk-map")
-def risk_map():
-    cases = _unresolved_cases()
-    clusters = build_risk_clusters(cases)
+def _risk_map_geojson(cases, clusters):
     features = []
     for case in cases:
         point = _case_coordinates(dict(case))
@@ -860,10 +865,29 @@ def risk_map():
                 "explanation": cluster["explanation"],
             },
         })
-    geojson = {"type": "FeatureCollection", "features": features}
+    return {"type": "FeatureCollection", "features": features}
+
+
+@app.route("/intelligence")
+def intelligence_cases():
+    cases = _unresolved_cases()
+    clusters = build_risk_clusters(cases)
+    clustered_ids = {
+        report["id"] for cluster in clusters for report in cluster["reports"]
+    }
+    unclustered = [case for case in cases if case["id"] not in clustered_ids]
+    return render_template(
+        "intelligence.html", clusters=clusters, unclustered=unclustered
+    )
+
+
+@app.route("/risk-map")
+def risk_map():
+    cases = _unresolved_cases()
+    clusters = build_risk_clusters(cases)
     return render_template(
         "risk_map.html",
-        geojson=geojson,
+        geojson=_risk_map_geojson(cases, clusters),
         clusters=clusters,
         reports=_reports_with_quality(cases),
     )

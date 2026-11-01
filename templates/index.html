@@ -1,58 +1,123 @@
 {% extends "base.html" %}
-{% block title %}Dashboard · FarmOps AI{% endblock %}
+{% block title %}Operations Centre · FarmOps AI{% endblock %}
+{% block page_context %}Overview{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
 {% block content %}
 <section class="hero">
-  <div><p class="eyebrow">FIELD INTELLIGENCE · RWANDA DEMONSTRATION</p><h1>From field evidence to <em>coordinated action.</em></h1><p class="lead">A district operations picture built from reported observations, model-assisted interpretation, geographic signals, and officer verification.</p></div>
+  <div>
+    <p class="eyebrow">National Agricultural Intelligence Operations Centre</p>
+    <h1>Field intelligence, <em>ready for action.</em></h1>
+    <p class="lead">A coordinated view of reported evidence, emerging spatial signals, and officer-verified response across Rwanda.</p>
+  </div>
   <a class="button primary" href="{{ url_for('new_case') }}">＋ Submit observation</a>
 </section>
+
+<div class="system-notice" role="status">
+  <span class="system-indicator {% if meta_api_configured %}configured{% else %}demo{% endif %}" aria-hidden="true"></span>
+  <div><strong>{% if meta_api_configured %}Meta Model API key configured{% else %}Demo mode · Meta Model API not configured{% endif %}</strong> — API status is based on server configuration, not a live health check. Each assessment shows its actual source; synthetic records are explicitly labelled.</div>
+</div>
 {% if synthetic_count %}
 <div class="notice demo-notice"><strong>Synthetic demonstration data:</strong> {{ synthetic_count }} reports are labelled as fictional UI scenarios. They are not real agricultural statistics, validated outbreak detections, or government data.</div>
 {% endif %}
-{% if risk_clusters %}
-<section class="panel cluster-preview">
-  <div class="panel-head"><div><p class="eyebrow">POTENTIAL EMERGING PATTERNS</p><h2>Geographically related reports</h2></div><a class="button secondary" href="{{ url_for('intelligence_cases') }}">Review intelligence</a></div>
-  <p class="muted">Rule-based candidate groupings only; not outbreak detections or disease diagnoses.</p>
-  <div class="cluster-preview-list">{% for cluster in risk_clusters[:2] %}<a href="{{ url_for('intelligence_cases') }}" class="cluster-preview-item"><strong>{{ cluster['count'] }} {{ cluster['crop'] }} reports</strong><span>{{ cluster['signal_label'] }} · {{ cluster['max_distance_km'] }} km · {{ cluster['day_span'] }} days</span></a>{% endfor %}</div>
+
+<section class="stats" aria-label="Operational metrics">
+  <div class="stat"><div class="stat-label"><span>Reports recorded</span><i aria-hidden="true"></i></div><strong>{{ cases|length }}</strong><small>All report records</small></div>
+  <div class="stat"><div class="stat-label"><span>Open response</span><i aria-hidden="true"></i></div><strong>{{ unresolved_cases }}</strong><small>Not marked resolved</small></div>
+  <div class="stat warning"><div class="stat-label"><span>Awaiting verification</span><i aria-hidden="true"></i></div><strong>{{ pending_reviews }}</strong><small>Officer review required</small></div>
+  <div class="stat warning"><div class="stat-label"><span>Actions pending</span><i aria-hidden="true"></i></div><strong>{{ task_counts['pending'] or 0 }}</strong><small>Field follow-through</small></div>
+  <div class="stat"><div class="stat-label"><span>Actions completed</span><i aria-hidden="true"></i></div><strong>{{ task_counts['completed'] or 0 }}</strong><small>Outcome recorded</small></div>
+</section>
+
+<section class="overview-grid" aria-label="Live field intelligence">
+  <article class="panel overview-map-panel">
+    <div class="map-panel-head">
+      <div><p class="eyebrow">RWANDA · FIELD INTELLIGENCE</p><h2>Geospatial operations picture</h2><p>Reported coordinates and rule-based candidate centroids · unresolved reports</p></div>
+      <div class="map-meta"><span>{{ geojson.features|length }} mapped features</span><a class="button secondary tiny" href="{{ url_for('risk_map') }}">Open risk map ↗</a></div>
+    </div>
+    <div class="map-visual">
+      <div id="overview-map" data-geojson-id="overview-geojson" data-fallback-id="overview-map-fallback" role="application" aria-label="Interactive map of Rwanda field reports and potential candidate clusters"></div>
+      <p class="map-fallback" id="overview-map-fallback">Interactive basemap requires an internet connection. Report locations are approximate; use the field reports index if tiles are unavailable.</p>
+    </div>
+    <div class="map-legend"><span><i class="legend-dot report-dot"></i>Field report</span><span><i class="legend-dot cluster-dot"></i>Potential cluster centroid</span><span>Markers use recorded coordinates</span></div>
+    <p class="map-attribution-note">Map tiles are requested from OpenStreetMap in your browser. Spatial groupings are candidate links, not confirmed risks.</p>
+  </article>
+  <aside class="panel feed-panel" aria-labelledby="feed-title">
+    <div class="feed-heading"><div><p class="eyebrow">PRIORITIZED INTAKE</p><h2 id="feed-title">Field intelligence feed</h2></div><a href="{{ url_for('field_reports') }}">All reports →</a></div>
+    <div class="feed-list">
+      {% for c in feed_cases[:6] %}
+      <a class="feed-item" href="{{ url_for('case_detail', case_id=c['id']) }}">
+        <span class="feed-marker {% if c['urgency'] in ['Urgent field review', 'Soon'] %}warning{% endif %}" aria-hidden="true"></span>
+        <span>
+          <span class="feed-title"><strong>{{ c['crop'] }} · {{ c['issue_type'] }}</strong><span class="pill">{{ c['review_status'] }}</span></span>
+          <p>{{ c['description']|truncate(105) }}</p>
+          <span class="feed-meta"><small>Case #{{ c['id'] }} · {{ c['district'] }} · {{ c['observed_at'] }}</small>{% if c['is_synthetic'] %}<span class="synthetic-tag">SYNTHETIC</span>{% endif %}</span>
+        </span>
+      </a>
+      {% else %}
+      <div class="empty"><h3>No field reports</h3><p>Submitted observations appear here for coordinated review.</p><a class="button primary" href="{{ url_for('new_case') }}">Submit observation</a></div>
+      {% endfor %}
+    </div>
+  </aside>
+</section>
+
+<section class="cluster-section" aria-labelledby="cluster-heading">
+  <div class="cluster-section-head">
+    <div><p class="eyebrow">SPATIAL · TEMPORAL SIGNALS</p><h2 id="cluster-heading">Emerging candidate clusters</h2><p>Transparent review-priority groupings from report crop, issue, date, and distance.</p></div>
+    <a href="{{ url_for('intelligence_cases') }}">Intelligence cases →</a>
+  </div>
+  {% if risk_clusters %}
+  <div class="cluster-list">{% for cluster in risk_clusters[:4] %}
+    <article class="panel cluster-card">
+      <div class="cluster-card-top"><div><h3>{{ cluster['crop'] }} · {{ cluster['issue_type'] }}</h3><p>{{ cluster['count'] }} related reports · {{ cluster['day_span'] }} days · {{ cluster['max_distance_km'] }} km max pair distance</p></div><span class="signal-pill">{{ cluster['signal_label'] }} · {{ cluster['signal'] }}/100</span></div>
+      <div class="cluster-metrics"><span><strong>{{ cluster['count'] }}</strong> reports</span><span><strong>{{ cluster['day_span'] }}</strong> day window</span><span><strong>{{ cluster['max_distance_km'] }} km</strong> distance</span></div>
+      <p class="cluster-explanation">{{ cluster['explanation'] }} This is a review heuristic, not an outbreak probability or disease confidence.</p>
+      {% if cluster['reports']|selectattr('is_synthetic')|list|length %}<span class="synthetic-tag">INCLUDES SYNTHETIC DEMO REPORTS</span>{% endif %}
+    </article>
+  {% endfor %}</div>
+  {% else %}
+  <div class="panel"><p class="muted">No candidate clusters meet the current distance, date, crop, and issue criteria. Reports without coordinates remain visible in the field feed.</p></div>
+  {% endif %}
+</section>
+
+<section class="overview-lower">
+  <article class="panel">
+    <div class="feed-heading"><div><p class="eyebrow">Awaiting officer review</p><h2>Officer review queue</h2></div><a href="{{ url_for('verification_centre') }}">Open queue →</a></div>
+    {% set queue_count = namespace(value=0) %}
+    {% for c in cases if c['review_status'] in ['Pending review', 'Follow Up'] %}
+      {% if queue_count.value < 4 %}
+      <div class="mini-action"><a href="{{ url_for('case_detail', case_id=c['id']) }}">Case #{{ c['id'] }} · {{ c['crop'] }} · {{ c['district'] }}{% if c['is_synthetic'] %} · SYNTHETIC{% endif %}</a><span>{{ c['review_status'] }}</span></div>
+      {% set queue_count.value = queue_count.value + 1 %}
+      {% endif %}
+    {% endfor %}
+    {% if queue_count.value == 0 %}<p class="muted">No cases await officer verification.</p>{% endif %}
+  </article>
+  <article class="panel">
+    <div class="feed-heading"><div><p class="eyebrow">COORDINATED RESPONSE</p><h2>Field operations</h2></div><a href="{{ url_for('response_operations') }}">All actions →</a></div>
+    <div class="mini-action"><a href="{{ url_for('response_operations') }}">Pending field actions</a><strong>{{ task_counts['pending'] or 0 }}</strong></div>
+    <div class="mini-action"><a href="{{ url_for('response_operations') }}?status=Completed">Completed with recorded outcomes</a><strong>{{ task_counts['completed'] or 0 }}</strong></div>
+  </article>
+</section>
+<section class="insights-grid overview-analytics" aria-label="Geographic and crop distribution">
+  <article class="panel">
+    <div class="feed-heading"><div><p class="eyebrow">GEOGRAPHIC DISTRIBUTION</p><h2>Open reports by location</h2></div></div>
+    {% if location_patterns %}<ul class="insight-list">{% for row in location_patterns %}<li><span>{{ row['location'] }}</span><strong>{{ row['case_count'] }}</strong></li>{% endfor %}</ul>{% else %}<p class="muted">No unresolved reports to summarize.</p>{% endif %}
+  </article>
+  <article class="panel">
+    <div class="feed-heading"><div><p class="eyebrow">OBSERVATION MIX</p><h2>Open reports by crop and issue</h2></div></div>
+    {% if risk_patterns %}<ul class="insight-list">{% for row in risk_patterns %}<li><span>{{ row['crop'] }} · {{ row['issue_type'] }}</span><strong>{{ row['case_count'] }}</strong></li>{% endfor %}</ul>{% else %}<p class="muted">No unresolved reports to summarize.</p>{% endif %}
+  </article>
+</section>
+{% if verified_observations %}
+<section class="panel verified-panel">
+  <div class="feed-heading"><div><p class="eyebrow">VERIFIED OBSERVATIONS</p><h2>Officer-confirmed field evidence</h2></div></div>
+  <ul class="verified-list">{% for row in verified_observations[:5] %}<li><p>{{ row['observation'] }}</p><small>{{ row['crop'] }} · {{ row['location'] }} · reviewed by {{ row['reviewer'] }}{% if row['is_synthetic'] %} · SYNTHETIC DEMO{% endif %}</small></li>{% endfor %}</ul>
 </section>
 {% endif %}
-<section class="stats">
-  <div class="stat"><span>Cases tracked</span><strong>{{ cases|length }}</strong><small>All recorded incidents</small></div>
-  <div class="stat"><span>Unresolved cases</span><strong>{{ unresolved_cases }}</strong><small>Still being coordinated</small></div>
-  <div class="stat"><span>Awaiting officer review</span><strong>{{ pending_reviews }}</strong><small>Need human verification</small></div>
-  <div class="stat"><span>Tasks pending</span><strong>{{ task_counts['pending'] or 0 }}</strong><small>Need follow-through</small></div>
-  <div class="stat"><span>Tasks completed</span><strong>{{ task_counts['completed'] or 0 }}</strong><small>Marked complete</small></div>
-</section>
-<section class="section-head"><div><p class="eyebrow">FIELD WORKSPACE</p><h2>Recent cases</h2></div><span class="muted">{{ cases|length }} total</span></section>
-{% if cases %}
-<div class="case-list">
-  {% for c in cases %}
-  <a class="case-card" href="{{ url_for('case_detail', case_id=c['id']) }}">
-    <div class="case-icon">⌁</div><div class="case-main"><div class="case-title-row"><h3>{{ c['farm_name'] }}</h3><span class="pill">{{ c['status'] }}</span><span class="pill review-pill">{{ c['review_status'] }}</span></div><p>{{ c['crop'] }} · {{ c['issue_type'] }} · {{ c['location'] }}</p><small>Case #{{ c['id'] }} · {{ c['created_at'] }}</small></div><div class="case-right"><span class="urgency">{{ c['urgency'] }}</span><span>View case →</span></div>
-  </a>
-  {% endfor %}
-</div>
-{% else %}
-<div class="empty"><div class="empty-icon">✳</div><h3>No cases yet</h3><p>Create a sample farm incident to see the case-management workflow in action.</p><a class="button primary" href="{{ url_for('new_case') }}">Create your first case</a></div>
-{% endif %}
-<section class="insights-grid">
-  <div class="panel">
-    <p class="eyebrow">VERIFIED OBSERVATIONS</p><h2>Officer-confirmed field notes</h2>
-    {% if verified_observations %}
-    <ul class="verified-list">{% for row in verified_observations %}<li><p>{{ row['observation'] }}</p><small>{{ row['crop'] }} · {{ row['location'] }} · reviewed by {{ row['reviewer'] }}{% if row['is_synthetic'] %} · SYNTHETIC DEMO{% endif %}</small></li>{% endfor %}</ul>
-    {% else %}<p class="muted">No officer-verified observations yet.</p>{% endif %}
-  </div>
-  <div class="panel">
-    <p class="eyebrow">GEOGRAPHIC DISTRIBUTION</p><h2>Unresolved cases by location</h2>
-    {% if location_patterns %}
-    <ul class="insight-list">{% for row in location_patterns %}<li><span>{{ row['location'] }}</span><strong>{{ row['case_count'] }}</strong></li>{% endfor %}</ul>
-    {% else %}<p class="muted">No unresolved cases to summarize.</p>{% endif %}
-  </div>
-  <div class="panel">
-    <p class="eyebrow">RISK PATTERNS</p><h2>Open reports by crop and issue</h2>
-    {% if risk_patterns %}
-    <ul class="insight-list">{% for row in risk_patterns %}<li><span>{{ row['crop'] }} · {{ row['issue_type'] }}</span><strong>{{ row['case_count'] }}</strong></li>{% endfor %}</ul>
-    {% else %}<p class="muted">No unresolved reports to summarize.</p>{% endif %}
-  </div>
-</section>
-<div class="notice"><strong>Prototype status:</strong> If no Meta API key is configured, case recommendations are labelled as demo workflow output and are not generated by an AI model.</div>
+<script id="overview-geojson" type="application/json">{{ geojson|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='risk_map.js') }}" defer></script>
 {% endblock %}

@@ -3,30 +3,55 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}FarmOps AI — Field Intelligence{% endblock %}</title>
+  <meta name="theme-color" content="#101b2b">
+  <title>{% block title %}FarmOps AI — National Agricultural Intelligence{% endblock %}</title>
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='workflow.css') }}">
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">F</span><span>FarmOps <b>AI</b><small>Field Intelligence</small></span></a>
-  <nav class="primary-nav" aria-label="Main navigation">
-    <a href="{{ url_for('index') }}">Overview</a>
-    <a href="{{ url_for('field_reports') }}">Field reports</a>
-    <a href="{{ url_for('intelligence_cases') }}">Intelligence</a>
-    <a href="{{ url_for('risk_map') }}">Risk map</a>
-    <a href="{{ url_for('verification_centre') }}">Verification</a>
-    <a href="{{ url_for('response_operations') }}">Operations</a>
-    <a class="nav-cta" href="{{ url_for('new_case') }}">+ New report</a>
-  </nav>
-</header>
-<main class="container">
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endif %}
-  {% endwith %}
-  {% block content %}{% endblock %}
-</main>
-<footer>FarmOps AI — Field Intelligence · Hackathon prototype · Not a substitute for local agricultural expertise</footer>
+<div class="shell">
+  <button class="sidebar-scrim" type="button" aria-label="Close navigation" tabindex="-1"></button>
+  <aside class="sidebar" id="primary-sidebar" aria-label="Application sidebar">
+    <a class="brand" href="{{ url_for('index') }}">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M25.6 5.2C15.2 5.2 8.3 8.7 7 15c-.8 4 1.7 7.3 5.8 7.3 5.7 0 9.5-6.1 12.8-17.1Z"/><path d="M6.4 27c2.4-6.4 6.7-10.2 13.1-13"/></svg></span>
+      <span class="brand-copy"><strong>FarmOps <b>AI</b></strong><small>FIELD INTELLIGENCE</small></span>
+    </a>
+    <div class="sidebar-section-label">OPERATIONS</div>
+    <nav class="side-nav" aria-label="Main navigation">
+      <a class="side-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}" {% if request.endpoint == 'index' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">⌂</span><span>Overview</span></a>
+      <a class="side-link {% if request.endpoint == 'field_reports' %}active{% endif %}" href="{{ url_for('field_reports') }}" {% if request.endpoint == 'field_reports' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">▤</span><span>Field Reports</span></a>
+      <a class="side-link {% if request.endpoint == 'intelligence_cases' %}active{% endif %}" href="{{ url_for('intelligence_cases') }}" {% if request.endpoint == 'intelligence_cases' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">⌁</span><span>Intelligence Cases</span></a>
+      <a class="side-link {% if request.endpoint == 'risk_map' %}active{% endif %}" href="{{ url_for('risk_map') }}" {% if request.endpoint == 'risk_map' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">◎</span><span>Risk Map</span></a>
+      <a class="side-link {% if request.endpoint == 'verification_centre' %}active{% endif %}" href="{{ url_for('verification_centre') }}" {% if request.endpoint == 'verification_centre' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">◉</span><span>Verification Centre</span></a>
+      <a class="side-link {% if request.endpoint == 'response_operations' %}active{% endif %}" href="{{ url_for('response_operations') }}" {% if request.endpoint == 'response_operations' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">↗</span><span>Response Operations</span></a>
+    </nav>
+    <div class="sidebar-section-label secondary-label">PLATFORM</div>
+    <div class="side-link planned-link" aria-label="Data Sources, planned and not integrated"><span class="nav-glyph" aria-hidden="true">◫</span><span>Data Sources</span><span class="planned-tag">PLANNED</span></div>
+    <div class="side-link planned-link" aria-label="Settings, planned"><span class="nav-glyph" aria-hidden="true">⚙</span><span>Settings</span><span class="planned-tag">PLANNED</span></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-system">
+      <span class="system-indicator {% if meta_api_configured %}configured{% else %}demo{% endif %}" aria-hidden="true"></span>
+      <div><strong>{% if meta_api_configured %}Meta API configured{% else %}Demo mode{% endif %}</strong><small>{% if meta_api_configured %}Per-case result shown in assessment{% else %}No MODEL_API_KEY detected{% endif %}</small></div>
+    </div>
+    <div class="sidebar-bottom"><span>RWANDA · FIELD OPERATIONS</span><span class="prototype-tag">PROTOTYPE</span></div>
+  </aside>
+  <div class="workspace">
+    <header class="workspace-bar">
+      <button class="sidebar-toggle" type="button" aria-controls="primary-sidebar" aria-expanded="false"><span aria-hidden="true">☰</span><span class="visually-hidden">Open navigation</span></button>
+      <div class="workspace-context"><span class="context-kicker">NATIONAL AGRICULTURAL INTELLIGENCE</span><span class="context-separator">/</span><span>{% block page_context %}Operations Centre{% endblock %}</span></div>
+      <div class="workspace-actions"><span class="workspace-status"><i class="{% if meta_api_configured %}configured{% else %}demo{% endif %}" aria-hidden="true"></i>{% if meta_api_configured %}API KEY CONFIGURED{% else %}DEMO · API OFFLINE{% endif %}</span><a class="button primary top-action" href="{{ url_for('new_case') }}"><span aria-hidden="true">＋</span> New observation</a></div>
+    </header>
+    <main class="main-content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}<div class="flash-stack" role="status">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+      <footer class="workspace-footer"><span>FARMOPS AI · FIELD INTELLIGENCE</span><span>Decision support only · Verify findings with qualified local experts</span></footer>
+    </main>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='shell.js') }}" defer></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

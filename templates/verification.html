@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Verification Centre · FarmOps AI{% endblock %}
+{% block page_context %}Verification Centre{% endblock %}
 {% block content %}
-<div class="page-heading"><p class="eyebrow">HUMAN VERIFICATION</p><h1>Verification centre</h1><p class="lead">AI output is a hypothesis. Officers decide what is verified and what action is appropriate.</p></div>
+<div class="page-heading"><div><p class="eyebrow">HUMAN REVIEW · ACCOUNTABILITY</p><h1>Verification centre</h1><p class="lead">Prioritized reports for agricultural officers. Separate what was observed, what the model suggested, and what still needs evidence.</p></div><span class="queue-count"><strong>{{ prioritized|length }}</strong><small>awaiting review</small></span></div>
 <div class="notice">Queue order uses the AI-suggested urgency first and then the oldest observation date. Urgency is unverified until an officer reviews the report.</div>
 {% if prioritized %}
 <div class="verification-queue">{% for entry in prioritized %}
 <article class="panel queue-card">
   <div class="panel-head"><div><p class="eyebrow">PRIORITY {{ loop.index }}</p><h2><a href="{{ url_for('case_detail', case_id=entry['case']['id']) }}">Case #{{ entry['case']['id'] }} · {{ entry['case']['farm_name'] }}</a></h2></div><span class="pill">{{ entry['case']['review_status'] }}</span></div>
   <p>{{ entry['case']['crop'] }} · {{ entry['case']['issue_type'] }} · {{ entry['case']['district'] }} · {{ entry['case']['observed_at'] }}{% if entry['case']['is_synthetic'] %} · SYNTHETIC DEMO{% endif %}</p>
-  <p>{{ entry['case']['description']|truncate(220) }}</p>
+  <div class="verification-evidence"><div><strong>Reported observation</strong><p>{{ entry['case']['description']|truncate(220) }}</p></div><div><strong>Assessment source</strong><p>{{ entry['case']['assessment_source'] or ('SYNTHETIC DEMO' if entry['case']['is_synthetic'] else 'Unknown · legacy report') }}{% if entry['case']['assessment_model'] %} · {{ entry['case']['assessment_model'] }}{% endif %}</p></div><div><strong>AI summary · unverified</strong><p>{{ entry['case']['ai_summary']|truncate(180) if entry['case']['ai_summary'] else 'No model summary recorded.' }}</p></div></div>
   <div class="queue-priority"><strong>Why prioritized</strong><ul>{% for reason in entry['reasons'] %}<li>{{ reason }}</li>{% endfor %}</ul><span>Report completeness: {{ entry['evidence_completeness'] }}% (not diagnosis confidence)</span></div>
   <a class="button primary" href="{{ url_for('case_detail', case_id=entry['case']['id']) }}#officer-review">Review evidence</a>
 </article>

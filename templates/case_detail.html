@@ -1,17 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Case #{{ case['id'] }} · FarmOps AI{% endblock %}
+{% block page_context %}Case #{{ case['id'] }}{% endblock %}
 {% block content %}
-<div class="page-heading">
-  <a class="back" href="{{ url_for('index') }}">← Dashboard</a>
-  <p class="eyebrow">CASE #{{ case['id'] }} · {{ case['observation_ref'] or 'LEGACY REPORT' }} · {{ case['created_at'] }}</p>
-  <h1>{{ case['farm_name'] }}</h1>
-  <p class="lead">{{ case['crop'] }} · {{ case['issue_type'] }} · {{ case['location'] }}</p>
+<div class="case-heading page-heading">
+  <div class="case-heading-main">
+    <a class="back" href="{{ url_for('field_reports') }}">← Field reports</a>
+    <p class="eyebrow">FIELD OBSERVATION · {{ case['observation_ref'] or 'LEGACY REPORT' }}</p>
+    <h1>{{ case['farm_name'] }}</h1>
+    <p class="lead">{{ case['crop'] }} · {{ case['issue_type'] }} · {{ case['district'] }} · {{ case['observed_at'] }}</p>
+  </div>
+  <div class="case-heading-status"><span class="pill">{{ case['status'] }}</span><span class="pill review-pill">{{ case['review_status'] }}</span>{% if case['is_synthetic'] %}<span class="synthetic-tag">SYNTHETIC DEMO</span>{% endif %}</div>
 </div>
 <div class="detail-grid">
-  <section class="panel">
+  <section class="panel evidence-panel">
     <div class="panel-head">
-      <div><p class="eyebrow">INITIAL REPORT</p><h2>What was observed</h2></div>
-      <span class="pill">{{ case['status'] }}</span>
+      <div><p class="eyebrow">Source evidence · {{ case['created_at'] }}</p><h2>Reported observation</h2></div>
     </div>
     <dl class="facts">
       <div><dt>Reporter</dt><dd>{{ case['reporter_name'] }}</dd></div>
@@ -21,8 +24,8 @@
       <div><dt>Crop</dt><dd>{{ case['crop'] }}</dd></div>
       <div><dt>Priority (AI suggestion)</dt><dd>{{ case['urgency'] }}</dd></div>
     </dl>
-    <p class="report-text">{{ case['description'] }}</p>
-    <div class="evidence-quality"><strong>Report completeness · {{ evidence_completeness }}%</strong><p>Counts five recorded fields: observation, date, district/location, coordinates, and photograph. This is not a diagnosis or calibrated AI confidence score.</p></div>
+    <div class="report-text"><strong>Original field note</strong><p>{{ case['description'] }}</p></div>
+    <div class="evidence-quality"><div class="quality-heading"><strong>Evidence completeness</strong><strong>{{ evidence_completeness }}%</strong></div><div class="quality-track" role="img" aria-label="Evidence completeness {{ evidence_completeness }} percent"><span style="width: {{ evidence_completeness }}%"></span></div><p>Counts five recorded fields: observation, date, district/location, coordinates, and photograph. Not diagnosis confidence.</p></div>
     {% if case['latitude'] is not none and case['longitude'] is not none %}<p class="muted">Approximate report point: {{ case['latitude'] }}, {{ case['longitude'] }} · Not a farm boundary.</p>{% endif %}
     {% if evidence_paths %}
     <h3>Field photographs</h3>
@@ -44,13 +47,14 @@
     </form>
   </section>
   <section class="panel plan-panel">
-    <p class="eyebrow">ASSESSMENT SOURCE · {{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN (LEGACY REPORT)') }}{% if case['assessment_model'] %} · MODEL {{ case['assessment_model'] }}{% endif %} · HUMAN VERIFICATION REQUIRED</p>
-    <h2>Summary and next steps</h2>
+    <p class="eyebrow">MODEL-ASSISTED ASSESSMENT · UNVERIFIED</p>
+    <div class="assessment-provenance"><span class="source-indicator {% if case['assessment_source']=='Meta Model API' %}source-meta{% elif case['is_synthetic'] %}source-synthetic{% else %}source-demo{% endif %}" aria-hidden="true"></span><span><strong>{{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN · LEGACY REPORT') }}</strong><small>{% if case['assessment_model'] %}Model {{ case['assessment_model'] }}{% elif case['assessment_source']=='DEMO MODE — no Meta API key configured' %}No model request was made{% elif case['assessment_source']=='Fallback mode — Meta API request failed' %}Model request failed; fallback shown{% else %}Human verification required{% endif %}</small></span></div>
+    <h2>Assessment for review</h2>
     <p>{{ case['ai_summary'] }}</p>
-    {% if observations %}<h3>Reported observations</h3><ul class="assessment-list">{% for item in observations %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-    {% if hypotheses %}<h3>Tentative hypotheses</h3><ul class="assessment-list">{% for item in hypotheses %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-    {% if missing_information %}<h3>Information still needed</h3><ul class="assessment-list">{% for item in missing_information %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-    {% if follow_up_questions %}<h3>Questions for the reporter</h3><ul class="assessment-list">{% for item in follow_up_questions %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% if observations %}<div class="assessment-section reported-section"><h3>Reported observations</h3><ul class="assessment-list">{% for item in observations %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if hypotheses %}<div class="assessment-section hypothesis-section"><h3>Tentative hypotheses</h3><ul class="assessment-list">{% for item in hypotheses %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if missing_information %}<div class="assessment-section missing-section"><h3>Missing evidence</h3><ul class="assessment-list">{% for item in missing_information %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if follow_up_questions %}<div class="assessment-section"><h3>Questions for the reporter</h3><ul class="assessment-list">{% for item in follow_up_questions %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
     <h3>Coordinated next steps</h3>
     <ol class="steps">{% for step in steps %}<li>{{ step }}</li>{% endfor %}</ol>
     <div class="uncertainty"><strong>Uncertainty and safety</strong><p>{{ case['uncertainty'] }}</p></div>
