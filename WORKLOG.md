@@ -61,9 +61,13 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - Added pure analytics helpers with unit coverage.
 - Validation: `python -m unittest` — 23 tests passed; all pages verified live.
 
+## 2026-11-01 — First live Meta assessment verified
+- Rotated to a fresh MODEL_API_KEY; synthetic live-fire case returned a genuine `Meta Model API` assessment (muse-spark-1.3) in ~19s.
+- Prior 401 was a rejected key value; app fallback behaved correctly throughout.
+
 ## Next validation steps
-- [ ] Confirm Meta Model API key and model access.
-- [ ] Test the first real model request.
+- [x] Confirm Meta Model API key and model access.
+- [x] Test the first real model request.
 - [ ] Validate the workflow with an agricultural worker.
 - [x] Add automated tests and run them.
 - [x] Add input/output validation for model responses.
