@@ -41,13 +41,14 @@
         <label>Recent weather<textarea name="recent_weather" data-evidence rows="2" maxlength="500" placeholder="Rain, dry spell, hail, or irrigation in the last two weeks.">{{ data.get('recent_weather','') }}</textarea></label>
       </div>
     </fieldset>
-    <div class="notice full"><strong>Meta data sharing:</strong> when configured, crop, issue category, observation date, description, and the affected-area, crop-context, and field-condition details above are sent to Meta for analysis. Reporter and farm names, location, district, and coordinates are not sent. Avoid personal details in the description or images. Attached photos are sent for analysis after embedded metadata is removed.</div>
+    <div class="notice full"><strong>Meta data sharing:</strong> when configured, crop, issue category, observation date, description, and the affected-area, crop-context, and field-condition details above are sent to Meta for analysis. Reporter and farm names, location, district, and coordinates are not sent. Avoid personal details in the description, images, or voice notes. Voice notes are transcribed by Meta's voice model; the transcript is stored with the case and analysed alongside the description. Attached photos are sent for analysis after embedded metadata is removed.</div>
     <fieldset class="form-section full"><legend>Field photographs (optional · 4 guided shots)</legend>
       <div class="photo-slots">
         <label>1 · Whole field<input type="file" name="photos_overview" data-evidence accept="image/jpeg,image/png,image/webp"><small>Stand back: show the affected area in context.</small></label>
         <label>2 · Affected close-up<input type="file" name="photos_affected" data-evidence accept="image/jpeg,image/png,image/webp"><small>Fill the frame with symptoms.</small></label>
         <label>3 · Healthy comparison<input type="file" name="photos_healthy" data-evidence accept="image/jpeg,image/png,image/webp"><small>Same crop, unaffected plants.</small></label>
         <label>4 · Detail<input type="file" name="photos_detail" data-evidence accept="image/jpeg,image/png,image/webp"><small>Leaf, stem, or soil close-up.</small></label>
+        <label>Field voice note (optional)<input type="file" name="voice_note" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.mp4"><small>Spoken observations: transcribed and included in the assessment. WAV under 10 MB needs no extra tools.</small></label>
       </div>
       <small class="muted">JPEG, PNG, or WebP, 5 MB each. Originals are stored outside public static assets. This prototype has no sign-in, so case links are not access-controlled. Pixels are sent to Meta when API access is configured; embedded metadata is stripped first.</small>
     </fieldset>

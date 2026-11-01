@@ -5,12 +5,21 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
+import tempfile
 import uuid
+import wave
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 
+try:
+    import requests
+except ImportError:
+    requests = None
 from dotenv import load_dotenv
 from flask import (
     Flask,
@@ -49,9 +58,21 @@ ALLOWED_IMAGE_TYPES = {
         lambda data: data.startswith(b"RIFF") and data[8:12] == b"WEBP",
     ),
 }
+MAX_VOICE_BYTES = 10 * 1024 * 1024
+ALLOWED_VOICE_TYPES = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".webm": "audio/webm",
+    ".mp4": "audio/mp4",
+}
+VOICE_TRANSCRIBE_MODEL = "muse-voice-transcribe-1.0"
+VOICE_TRANSCRIBE_URL = META_API_BASE_URL + "/asr/transcribe"
+VOICE_TRANSCRIBE_TIMEOUT_SECONDS = 300.0
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me")
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
 
 @app.context_processor
@@ -264,7 +285,7 @@ def evidence_completeness(case):
         bool(case.get("observed_at")),
         bool(case.get("district") and case.get("location")),
         case.get("latitude") is not None and case.get("longitude") is not None,
-        bool(evidence_paths),
+        any(str(name).lower().endswith((".jpg", ".jpeg", ".png", ".webp")) for name in evidence_paths),
         bool(case.get("affected_area_value") or case.get("field_position")
              or case.get("proportion_affected")),
         bool(case.get("growth_stage") or case.get("variety") or case.get("planting_date")),
@@ -689,6 +710,151 @@ def _meta_fallback(case_data, exc):
             f"Technical detail: {technical_detail}"
         ),
     }
+
+
+def _sniff_audio(data, extension):
+    if extension == ".wav":
+        return data.startswith(b"RIFF") and data[8:12] == b"WAVE"
+    if extension == ".mp3":
+        return data.startswith(b"ID3") or (
+            len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0
+        )
+    if extension in (".m4a", ".mp4"):
+        return len(data) > 11 and data[4:8] == b"ftyp"
+    if extension == ".ogg":
+        return data.startswith(b"OggS")
+    if extension == ".webm":
+        return data.startswith(b"\x1a\x45\xdf\xa3")
+    return False
+
+
+def _read_voice_upload(uploaded):
+    if not uploaded or not uploaded.filename:
+        return None
+    extension = Path(uploaded.filename).suffix.lower()
+    mime_type = ALLOWED_VOICE_TYPES.get(extension)
+    original_name = uploaded.filename.replace("\\", "/").rsplit("/", 1)[-1][:120]
+    if mime_type is None:
+        raise ValueError(
+            f"Voice note {original_name!r} has an unsupported audio type."
+        )
+    data = uploaded.stream.read(MAX_VOICE_BYTES + 1)
+    if len(data) > MAX_VOICE_BYTES:
+        raise ValueError(
+            f"Voice note {original_name!r} exceeds the 10 MB intake limit."
+        )
+    declared = (uploaded.mimetype or "").split(";")[0].strip().lower()
+    if declared and declared != mime_type and not (
+        extension == ".wav" and declared in ("audio/wav", "audio/x-wav", "audio/wave")
+    ):
+        raise ValueError(
+            f"Voice note {original_name!r} is not a supported audio file."
+        )
+    if not _sniff_audio(data, extension):
+        raise ValueError(
+            f"Voice note {original_name!r} is not a supported audio file."
+        )
+    return (extension, mime_type, data, original_name)
+
+
+def _wav_is_transcribable(data):
+    try:
+        with wave.open(BytesIO(data), "rb") as handle:
+            channels = handle.getnchannels()
+            width = handle.getsampwidth()
+            rate = handle.getframerate()
+            frames = handle.getnframes()
+    except (wave.Error, EOFError, ValueError):
+        return False
+    return channels == 1 and width == 2 and rate in (16000, 24000) and frames > 0
+
+
+def _ffmpeg_convert_to_wav(data, extension):
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix="farmops-voice-") as workdir:
+        source = Path(workdir) / f"source{extension}"
+        target = Path(workdir) / "voice.wav"
+        source.write_bytes(data)
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-v", "error", "-i", str(source),
+                 "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(target)],
+                capture_output=True, timeout=120, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if not target.exists():
+            return None
+        return target.read_bytes()
+
+
+def transcribe_voice_note(audio_bytes, filename, context_terms=None):
+    api_key = (os.environ.get("MODEL_API_KEY") or "").strip()
+    if not api_key:
+        return ("", "voice transcription is unavailable (API key not configured)")
+    if requests is None:
+        return ("", "voice transcription is unavailable (requests library not installed)")
+    payload = {"mode": "PUSH_TO_TALK", "model": VOICE_TRANSCRIBE_MODEL, "audioEncoding": "WAV"}
+    keywords = [term for term in (context_terms or []) if term]
+    if keywords:
+        payload["keywords"] = keywords
+    try:
+        response = requests.post(
+            VOICE_TRANSCRIBE_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={
+                "request": (None, json.dumps(payload), "application/json"),
+                "audio": (filename, audio_bytes),
+            },
+            timeout=VOICE_TRANSCRIBE_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        app.logger.warning("voice_transcribe_failed error=%s", type(exc).__name__)
+        return ("", f"voice transcription failed ({type(exc).__name__})")
+    if response.status_code != 200:
+        hint = {
+            400: "malformed request or audio over the 10-minute cap",
+            401: "the credential was not accepted",
+            404: "endpoint not found",
+            413: "body over 32 MB",
+            429: "rate limited; back off and retry",
+            500: "the server exceeded its processing budget",
+        }.get(response.status_code, "unexpected response")
+        app.logger.warning("voice_transcribe_failed status=%s", response.status_code)
+        return ("", f"voice transcription failed (HTTP {response.status_code}: {hint})")
+    try:
+        data = response.json()
+    except ValueError:
+        return ("", "voice transcription failed (invalid response)")
+    if isinstance(data, dict):
+        text = (data.get("transcript") or "").strip()
+        if not text and isinstance(data.get("turns"), list):
+            text = " ".join(
+                str(turn.get("transcript", "")).strip()
+                for turn in data["turns"]
+                if isinstance(turn, dict) and str(turn.get("transcript", "")).strip()
+            )
+    else:
+        text = ""
+    if not text:
+        app.logger.info("voice_note_empty")
+        return ("", "voice transcription returned no speech")
+    app.logger.info("voice_note_transcribed chars=%d", len(text))
+    return (text, "")
+
+
+def _transcribe_upload(extension, data, original_name, context_terms):
+    audio = data
+    if extension != ".wav" or not _wav_is_transcribable(data):
+        converted = _ffmpeg_convert_to_wav(data, extension)
+        if converted is None or not _wav_is_transcribable(converted):
+            if extension != ".wav" and shutil.which("ffmpeg") is None:
+                return ("", "voice transcription needs ffmpeg for this audio format")
+            return ("", "voice note audio could not be prepared for transcription")
+        audio = converted
+    return transcribe_voice_note(audio, original_name, context_terms)
 
 
 def _read_labeled_photos(entries):
@@ -1327,11 +1493,23 @@ def new_case():
             for slot in SHOT_TYPES:
                 labeled_uploads.append((request.files.get(f"photos_{slot}"), slot))
             photos = _read_labeled_photos(labeled_uploads)
+            voice_upload = _read_voice_upload(request.files.get("voice_note"))
         except ValueError as exc:
             flash(str(exc), "error")
             return render_template("new_case.html", data=data), 400
 
-        result = analyze_with_meta(data, [(mime, content) for _, mime, content, _, _ in photos])
+        voice_transcript, voice_notice = ("", "")
+        if voice_upload:
+            voice_extension, _voice_mime, voice_data, voice_original = voice_upload
+            voice_transcript, voice_notice = _transcribe_upload(
+                voice_extension, voice_data, voice_original, [data["crop"], data["district"]]
+            )
+        analysis_data = dict(data)
+        if voice_transcript:
+            analysis_data["description"] = (
+                data["description"] + "\n\nVoice note transcript:\n" + voice_transcript
+            )
+        result = analyze_with_meta(analysis_data, [(mime, content) for _, mime, content, _, _ in photos])
         saved_paths = []
         try:
             if photos:
@@ -1340,6 +1518,13 @@ def new_case():
                 filename = f"{uuid.uuid4().hex}{extension}"
                 saved_paths.append(filename)
                 (UPLOAD_DIR / filename).write_bytes(content)
+            voice_stored = None
+            if voice_upload:
+                UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+                voice_extension, _voice_mime, voice_data, _voice_original = voice_upload
+                voice_stored = f"{uuid.uuid4().hex}{voice_extension}"
+                (UPLOAD_DIR / voice_stored).write_bytes(voice_data)
+                saved_paths.append(voice_stored)
             with db() as conn:
                 cur = conn.execute("""
                     INSERT INTO cases
@@ -1397,7 +1582,7 @@ def new_case():
                         "assessment_model": result.get("model", ""),
                     },
                 )
-                _record_assessment_run(conn, case_id, 1, _case_data_for_meta(data), result)
+                _record_assessment_run(conn, case_id, 1, _case_data_for_meta(analysis_data), result)
                 for (extension, mime_type, content, original_name, shot), stored_name in zip(
                     photos, saved_paths
                 ):
@@ -1428,6 +1613,30 @@ def new_case():
                             "sha256": hashlib.sha256(content).hexdigest(),
                             "shot_type": shot,
                         },
+                    )
+                if voice_upload:
+                    _voice_extension, voice_mime, voice_data, voice_original = voice_upload
+                    conn.execute(
+                        "INSERT INTO case_evidence "
+                        "(case_id, stored_name, original_name, media_type, size_bytes, sha256, shot_type, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (case_id, voice_stored, voice_original, voice_mime, len(voice_data),
+                         hashlib.sha256(voice_data).hexdigest(), "voice", utc_timestamp()),
+                    )
+                    if voice_transcript:
+                        voice_note_text = voice_transcript
+                    else:
+                        voice_note_text = f"Voice note ({voice_original}) stored. {voice_notice}".strip()
+                    conn.execute(
+                        "INSERT INTO case_notes (case_id, author, note, created_at) VALUES (?, ?, ?, ?)",
+                        (case_id, data["reporter_name"], voice_note_text, utc_timestamp()),
+                    )
+                    _record_event(
+                        conn,
+                        case_id,
+                        "evidence_added",
+                        data["reporter_name"],
+                        {"note": voice_note_text[:200], "photo": False, "voice": True},
                     )
                 for step in result.get("steps", []):
                     conn.execute(
@@ -1582,6 +1791,8 @@ def case_evidence(case_id, filename):
         abort(404)
     extension = image_path.suffix.lower()
     mime_type = ALLOWED_IMAGE_TYPES.get(extension, (None,))[0]
+    if mime_type is None:
+        mime_type = ALLOWED_VOICE_TYPES.get(extension)
     if mime_type is None:
         abort(404)
     response = send_file(image_path, mimetype=mime_type, conditional=False)
@@ -1753,13 +1964,17 @@ def add_evidence(case_id):
     if shot not in SHOT_TYPES:
         shot = ""
     upload = request.files.get("photo")
+    voice_file = request.files.get("voice_note")
     try:
         photos = _read_labeled_photos([(upload, shot)] if upload else [])
+        voice_entry = _read_voice_upload(voice_file)
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(url_for("case_detail", case_id=case_id))
     stored_name = None
     photo_entry = None
+    voice_stored = None
+    voice_saved = None
     try:
         if photos:
             UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1767,9 +1982,15 @@ def add_evidence(case_id):
             stored_name = f"{uuid.uuid4().hex}{extension}"
             (UPLOAD_DIR / stored_name).write_bytes(content)
             photo_entry = (stored_name, original_name, mime_type, content, shot_type)
+        if voice_entry:
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            voice_extension, voice_mime, voice_data, voice_original = voice_entry
+            voice_stored = f"{uuid.uuid4().hex}{voice_extension}"
+            (UPLOAD_DIR / voice_stored).write_bytes(voice_data)
+            voice_saved = (voice_stored, voice_original, voice_mime, voice_data, voice_extension)
         with db() as conn:
             case = conn.execute(
-                "SELECT evidence_paths FROM cases WHERE id=?", (case_id,)
+                "SELECT evidence_paths, crop, district FROM cases WHERE id=?", (case_id,)
             ).fetchone()
             if not case:
                 flash("Case not found.", "error")
@@ -1800,13 +2021,45 @@ def add_evidence(case_id):
                 )
             _record_event(
                 conn, case_id, "evidence_added", author,
-                {"note": note[:200], "photo": bool(photo_entry)},
+                {"note": note[:200], "photo": bool(photo_entry), "voice": bool(voice_saved)},
             )
+            if voice_saved:
+                stored, original, media, data_bytes, voice_extension = voice_saved
+                transcript, notice = _transcribe_upload(
+                    voice_extension, data_bytes, original, [case["crop"], case["district"]]
+                )
+                try:
+                    voice_paths = json.loads(case["evidence_paths"])
+                except (ValueError, TypeError):
+                    voice_paths = []
+                if not isinstance(voice_paths, list):
+                    voice_paths = []
+                voice_paths.append(stored)
+                conn.execute(
+                    "UPDATE cases SET evidence_paths=? WHERE id=?",
+                    (json.dumps(voice_paths), case_id),
+                )
+                conn.execute(
+                    "INSERT INTO case_evidence "
+                    "(case_id, stored_name, original_name, media_type, size_bytes, sha256, shot_type, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (case_id, stored, original, media, len(data_bytes),
+                     hashlib.sha256(data_bytes).hexdigest(), "voice", utc_timestamp()),
+                )
+                if transcript:
+                    voice_note_text = transcript
+                else:
+                    voice_note_text = f"Voice note ({original}) stored. {notice}".strip()
+                conn.execute(
+                    "INSERT INTO case_notes (case_id, author, note, created_at) VALUES (?, ?, ?, ?)",
+                    (case_id, author, voice_note_text, utc_timestamp()),
+                )
     except Exception:
-        if stored_name:
-            path = UPLOAD_DIR / stored_name
-            if path.exists():
-                path.unlink()
+        for doomed in (stored_name, voice_stored):
+            if doomed:
+                path = UPLOAD_DIR / doomed
+                if path.exists():
+                    path.unlink()
         raise
     flash("Follow-up evidence recorded.", "success")
     return redirect(url_for("case_detail", case_id=case_id))

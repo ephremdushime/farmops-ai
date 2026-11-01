@@ -7,6 +7,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import wave
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
@@ -1086,6 +1087,188 @@ class FarmOpsSmokeTests(unittest.TestCase):
             os.environ.pop("MODEL_API_KEY")
             self.module.load_environment(env_file)
             self.assertEqual(os.environ["MODEL_API_KEY"], "dotenv-test-key")
+
+    def _wav_bytes(self, seconds=0.2, rate=16000):
+        buf = BytesIO()
+        with wave.open(buf, "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(rate)
+            handle.writeframes(b"\x00\x00" * int(seconds * rate))
+        return buf.getvalue()
+
+    def _voice_case_fields(self):
+        return {
+            "farm_name": "Demo Farm",
+            "reporter_name": "Field Officer",
+            "location": "Demo District",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "description": "Yellowing leaves.",
+            "district": "Central Demo District",
+            "observed_at": self.module.datetime.now(
+                self.module.timezone.utc
+            ).date().isoformat(),
+            "latitude": "-1.95",
+            "longitude": "30.06",
+        }
+
+    def test_voice_note_is_transcribed_and_enriches_assessment(self):
+        payload = {
+            "summary": "Review yellowing with the transcript context.",
+            "urgency": "Needs review",
+            "observations": ["Transcript mentions low corner."],
+            "hypotheses": [],
+            "missing_information": [],
+            "follow_up_questions": [],
+            "steps": ["Visit the low corner."],
+            "uncertainty": "Transcript context is limited.",
+        }
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(payload)
+        )
+        transcript = "Yellow patches near the low corner after rain."
+        asr = SimpleNamespace(status_code=200, json=lambda: {"transcript": transcript})
+        fields = self._voice_case_fields()
+        fields["voice_note"] = (
+            BytesIO(self._wav_bytes()), "note.wav", "audio/wav",
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                with patch("app.requests") as asr_lib:
+                    asr_lib.post.return_value = asr
+                    response = self.client.post(
+                        "/cases/new", data=fields,
+                        content_type="multipart/form-data",
+                    )
+        self.assertEqual(response.status_code, 302)
+        request_payload = json.loads(asr_lib.post.call_args.kwargs["files"]["request"][1])
+        self.assertEqual(request_payload["model"], "muse-voice-transcribe-1.0")
+        self.assertEqual(request_payload["audioEncoding"], "WAV")
+        self.assertEqual(request_payload["mode"], "PUSH_TO_TALK")
+        self.assertEqual(request_payload["keywords"], ["Maize", "Central Demo District"])
+        self.assertIn(transcript, str(client.responses.create.call_args))
+        with self.module.db() as conn:
+            row = conn.execute(
+                "SELECT id, evidence_paths FROM cases"
+            ).fetchone()
+            case_id = row["id"]
+            filenames = json.loads(row["evidence_paths"])
+            evidence = conn.execute(
+                "SELECT * FROM case_evidence WHERE case_id=?", (case_id,)
+            ).fetchone()
+            note = conn.execute(
+                "SELECT note FROM case_notes WHERE case_id=?", (case_id,)
+            ).fetchone()
+        self.assertEqual(len(filenames), 1)
+        self.assertTrue(filenames[0].endswith(".wav"))
+        self.assertEqual(evidence["shot_type"], "voice")
+        self.assertEqual(evidence["original_name"], "note.wav")
+        self.assertEqual(note["note"], transcript)
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"Field voice notes", detail)
+        self.assertIn(b"<audio", detail)
+        self.assertIn(transcript.encode(), detail)
+        audio = self.client.get(f"/cases/{case_id}/evidence/{filenames[0]}")
+        self.assertEqual(audio.status_code, 200)
+        audio.close()
+
+    def test_oversized_voice_note_is_rejected(self):
+        fields = self._voice_case_fields()
+        fields["voice_note"] = (
+            BytesIO(b"x" * (10 * 1024 * 1024 + 1)), "long.wav", "audio/wav",
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new", data=fields, content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"exceeds the 10 MB", response.data)
+
+    def test_non_audio_upload_is_rejected_as_voice_note(self):
+        fields = self._voice_case_fields()
+        fields["voice_note"] = (
+            BytesIO(b"MZ fake binary"), "evil.exe", "application/octet-stream",
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new", data=fields, content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"unsupported audio type", response.data)
+
+    def test_voice_note_without_api_key_is_stored_with_notice(self):
+        fields = self._voice_case_fields()
+        fields["voice_note"] = (
+            BytesIO(self._wav_bytes()), "note.wav", "audio/wav",
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new", data=fields, content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            row = conn.execute("SELECT id FROM cases").fetchone()
+            note = conn.execute(
+                "SELECT note FROM case_notes WHERE case_id=?", (row["id"],)
+            ).fetchone()
+        self.assertIn("stored", note["note"])
+        self.assertIn("API key not configured", note["note"])
+        self.assertIn(b"Field voice notes", self.client.get(f"/cases/{row['id']}").data)
+
+    def test_follow_up_voice_note_is_stored(self):
+        case_id = self.create_case()
+        transcript = "Drainage ditch is blocked on the east side."
+        asr = SimpleNamespace(status_code=200, json=lambda: {"transcript": transcript})
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("app.requests") as asr_lib:
+                asr_lib.post.return_value = asr
+                response = self.client.post(
+                    f"/cases/{case_id}/evidence",
+                    data={
+                        "note": "Evening revisit.",
+                        "author": "Field Officer",
+                        "voice_note": (
+                            BytesIO(self._wav_bytes()), "revisit.wav",
+                            "audio/wav",
+                        ),
+                    },
+                    content_type="multipart/form-data",
+                )
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            paths = json.loads(conn.execute(
+                "SELECT evidence_paths FROM cases WHERE id=?", (case_id,)
+            ).fetchone()["evidence_paths"])
+            evidence = conn.execute(
+                "SELECT * FROM case_evidence WHERE case_id=?", (case_id,)
+            ).fetchone()
+            notes = conn.execute(
+                "SELECT note FROM case_notes WHERE case_id=?", (case_id,)
+            ).fetchall()
+        self.assertEqual(len(paths), 1)
+        self.assertTrue(paths[0].endswith(".wav"))
+        self.assertEqual(evidence["shot_type"], "voice")
+        self.assertIn(transcript, [row["note"] for row in notes])
+        self.assertIn(transcript.encode(), self.client.get(f"/cases/{case_id}").data)
+
+    def test_voice_only_report_does_not_claim_photo_evidence(self):
+        fields = self._voice_case_fields()
+        fields["voice_note"] = (
+            BytesIO(self._wav_bytes()), "note.wav", "audio/wav",
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new", data=fields, content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            row = conn.execute("SELECT id FROM cases").fetchone()
+        detail = self.client.get(f"/cases/{row['id']}").data
+        self.assertNotIn(b"Field photographs", detail)
+        self.assertIn(b"Field voice notes", detail)
+        self.assertIn(b">50%</strong>", detail)
 
 
 if __name__ == "__main__":

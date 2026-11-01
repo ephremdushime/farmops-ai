@@ -78,3 +78,9 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - [x] Add automated tests and run them.
 - [x] Add input/output validation for model responses.
 - [ ] Add a deployment plan and record demo evidence.
+
+## Voice-note evidence (Nov 2)
+- Optional voice-note upload on intake and follow-up (WAV/MP3/M4A/OGG/WebM/MP4, 10 MB), transcribed via Meta muse-voice-transcribe-1.0 (PUSH_TO_TALK, WAV).
+- Transcript stored as a case note, appended to the Muse Spark assessment input, and playable from the case page; audio served privately with no-store.
+- Graceful notices when the API key, requests, or ffmpeg is missing; voice never counts as photo evidence in completeness.
+- Validation: `python -m unittest` -- 43 tests passed; live E2E verified (real transcribe plus spark assessment on synthetic speech).
