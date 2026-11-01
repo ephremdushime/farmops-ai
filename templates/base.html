@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101b2b">
   <title>{% block title %}FarmOps AI — National Agricultural Intelligence{% endblock %}</title>
+  <script>
+  try { var farmopsTheme = localStorage.getItem("farmops-theme"); if (farmopsTheme === "dark" || farmopsTheme === "light") { document.documentElement.dataset.theme = farmopsTheme; } else if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) { document.documentElement.dataset.theme = "dark"; } } catch (themeError) {}
+  </script>
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='workflow.css') }}">
@@ -40,7 +43,7 @@
     <header class="workspace-bar">
       <button class="sidebar-toggle" type="button" aria-controls="primary-sidebar" aria-expanded="false"><span aria-hidden="true">☰</span><span class="visually-hidden">Open navigation</span></button>
       <div class="workspace-context"><span class="context-kicker">NATIONAL AGRICULTURAL INTELLIGENCE</span><span class="context-separator">/</span><span>{% block page_context %}Operations Centre{% endblock %}</span></div>
-      <div class="workspace-actions"><span class="workspace-status"><i class="{% if meta_api_configured %}configured{% else %}demo{% endif %}" aria-hidden="true"></i>{% if meta_api_configured %}API KEY CONFIGURED{% else %}DEMO · API OFFLINE{% endif %}</span><a class="button primary top-action" href="{{ url_for('new_case') }}"><span aria-hidden="true">＋</span> New observation</a></div>
+      <div class="workspace-actions"><span class="workspace-status"><i class="{% if meta_api_configured %}configured{% else %}demo{% endif %}" aria-hidden="true"></i>{% if meta_api_configured %}API KEY CONFIGURED{% else %}DEMO · API OFFLINE{% endif %}</span><button class="button secondary tiny theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme"><span aria-hidden="true">◐</span> <span class="theme-toggle-label">Dark</span></button><a class="button primary top-action" href="{{ url_for('new_case') }}"><span aria-hidden="true">＋</span> New observation</a></div>
     </header>
     <main class="main-content">
       {% with messages = get_flashed_messages(with_categories=true) %}

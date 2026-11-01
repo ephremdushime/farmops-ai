@@ -700,6 +700,8 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"Urgency mix", overview.data)
         self.assertIn(b"OPERATIONS WATCH", overview.data)
         self.assertIn(b"Evidence depth", overview.data)
+        self.assertIn(b"theme-toggle", overview.data)
+        self.assertIn(b"farmops-theme", overview.data)
         self.assertIn(b"First reports from", overview.data)
 
     def test_watch_signals_flag_intake_spike(self):

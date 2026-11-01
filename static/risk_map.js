@@ -10,9 +10,17 @@
     const map = L.map(mapElement).setView([-1.94, 29.87], 8);
     let tileErrors = 0;
     let tileFallbackUsed = false;
-    const tileLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      maxZoom: 19,
-      attribution: "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors &copy; <a href=\"https://carto.com/attributions\">CARTO</a>",
+    const basemapAttribution = "&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>";
+    const basemapUrl = () =>
+      document.documentElement.dataset.theme === "dark"
+        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+    const tileLayer = L.tileLayer(basemapUrl(), { maxZoom: 19, attribution: basemapAttribution });
+    document.addEventListener("farmops:theme", () => {
+      if (!tileFallbackUsed) {
+        tileErrors = 0;
+        tileLayer.setUrl(basemapUrl());
+      }
     });
     tileLayer.on("tileerror", () => {
       tileErrors += 1;
@@ -28,7 +36,17 @@
     });
     tileLayer.addTo(map);
     if (fallback) fallback.hidden = true;
+    if (!points.length) {
+      const emptyNotice = document.createElement("p");
+      emptyNotice.className = "map-empty";
+      emptyNotice.textContent = "No reports with map coordinates yet. Add coordinates to a report to see it on this map.";
+      mapElement.appendChild(emptyNotice);
+    }
 
+    const darkMap = document.documentElement.dataset.theme === "dark";
+    const palette = darkMap
+      ? { report: "#4cc38a", reportEdge: "#1f7a4d", cluster: "#e07864", clusterEdge: "#a33e2c" }
+      : { report: "#2f8a5e", reportEdge: "#15583f", cluster: "#d97a5f", clusterEdge: "#963f30" };
     const bounds = [];
     points.forEach((feature) => {
       const [longitude, latitude] = feature.geometry.coordinates;
@@ -36,8 +54,8 @@
       const cluster = properties.kind === "potential_cluster";
       const marker = L.circleMarker([latitude, longitude], {
         radius: cluster ? 12 : 7,
-        color: cluster ? "#a33e2c" : "#1f7a4d",
-        fillColor: cluster ? "#e07864" : "#4cc38a",
+        color: cluster ? palette.clusterEdge : palette.reportEdge,
+        fillColor: cluster ? palette.cluster : palette.report,
         fillOpacity: 0.82,
         weight: cluster ? 3 : 1,
       }).addTo(map);

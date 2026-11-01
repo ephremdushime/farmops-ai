@@ -21,4 +21,25 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeSidebar();
   });
+  const themeToggle = document.getElementById("theme-toggle");
+  const themeLabel = document.querySelector(".theme-toggle-label");
+  const syncThemeLabel = () => {
+    const isDark = document.documentElement.dataset.theme === "dark";
+    if (themeLabel) themeLabel.textContent = isDark ? "Light" : "Dark";
+    if (themeToggle) themeToggle.setAttribute("aria-label", isDark ? "Switch to light theme" : "Switch to dark theme");
+  };
+  if (themeToggle) {
+    syncThemeLabel();
+    themeToggle.addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try {
+        localStorage.setItem("farmops-theme", next);
+      } catch (error) {
+        /* private mode: theme applies for this session only */
+      }
+      syncThemeLabel();
+      document.dispatchEvent(new CustomEvent("farmops:theme", { detail: next }));
+    });
+  }
 })();
