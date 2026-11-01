@@ -1,14 +1,17 @@
 import base64
 import hashlib
+import io
 import json
 import math
 import os
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
 from flask import (
     Flask,
     abort,
@@ -22,8 +25,19 @@ from flask import (
 from werkzeug.exceptions import RequestEntityTooLarge
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def load_environment(env_file=BASE_DIR / ".env"):
+    load_dotenv(dotenv_path=env_file, override=False)
+
+
+load_environment()
+
 DB_PATH = Path(os.getenv("FARMOPS_DB_PATH", str(BASE_DIR / "farmops.db")))
 UPLOAD_DIR = Path(os.getenv("FARMOPS_UPLOAD_DIR", str(BASE_DIR / "instance" / "uploads")))
+META_API_BASE_URL = "https://api.meta.ai/v1"
+DEFAULT_META_MODEL = "muse-spark-1.3"
+META_API_TIMEOUT_SECONDS = 60.0
 MAX_PHOTOS = 3
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {
@@ -80,6 +94,8 @@ def init_db():
                 longitude REAL,
                 is_synthetic INTEGER NOT NULL DEFAULT 0,
                 observation_ref TEXT NOT NULL DEFAULT '',
+                assessment_source TEXT NOT NULL DEFAULT '',
+                assessment_model TEXT NOT NULL DEFAULT '',
                 review_status TEXT NOT NULL DEFAULT 'Pending review',
                 status TEXT NOT NULL DEFAULT 'Open',
                 created_at TEXT NOT NULL
@@ -162,6 +178,8 @@ def init_db():
             ("longitude", "REAL"),
             ("is_synthetic", "INTEGER NOT NULL DEFAULT 0"),
             ("observation_ref", "TEXT NOT NULL DEFAULT ''"),
+            ("assessment_source", "TEXT NOT NULL DEFAULT ''"),
+            ("assessment_model", "TEXT NOT NULL DEFAULT ''"),
         ):
             if column not in existing_columns:
                 conn.execute(f"ALTER TABLE cases ADD COLUMN {column} {definition}")
@@ -371,6 +389,89 @@ def validate_assessment(payload):
     }
 
 
+ASSESSMENT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "urgency": {
+            "type": "string",
+            "enum": ["Routine", "Soon", "Urgent field review", "Needs review"],
+        },
+        "observations": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "hypotheses": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "missing_information": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 8,
+        },
+        "follow_up_questions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 8,
+        },
+        "steps": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 3,
+            "maxItems": 5,
+        },
+        "uncertainty": {"type": "string"},
+    },
+    "required": [
+        "summary",
+        "urgency",
+        "observations",
+        "hypotheses",
+        "missing_information",
+        "follow_up_questions",
+        "steps",
+        "uncertainty",
+    ],
+    "additionalProperties": False,
+}
+
+
+def _case_data_for_meta(case_data):
+    fields = ("crop", "issue_type", "description", "observed_at")
+    data = {field: case_data[field] for field in fields if case_data.get(field)}
+    for field in ("reporter_name", "farm_name", "location", "district"):
+        private_value = case_data.get(field)
+        if isinstance(private_value, str) and len(private_value.strip()) >= 3:
+            data["description"] = re.sub(
+                re.escape(private_value.strip()),
+                "[redacted]",
+                data.get("description", ""),
+                flags=re.IGNORECASE,
+            )
+    return data
+
+
+def _image_without_metadata(mime_type, image_bytes):
+    from PIL import Image, ImageOps
+
+    image_format = {
+        "image/jpeg": "JPEG",
+        "image/png": "PNG",
+        "image/webp": "WEBP",
+    }.get(mime_type)
+    if image_format is None:
+        raise ValueError("Unsupported image format for Meta analysis.")
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            if getattr(source, "is_animated", False):
+                raise ValueError("Animated images cannot be sent for Meta analysis.")
+            image = ImageOps.exif_transpose(source)
+            if image_format == "JPEG" and image.mode not in ("RGB", "L"):
+                image = image.convert("RGB")
+            output = io.BytesIO()
+            save_options = {"lossless": True} if image_format == "WEBP" else {}
+            image.save(output, format=image_format, **save_options)
+    except Image.DecompressionBombError as exc:
+        raise ValueError("Image dimensions exceed the supported limit.") from exc
+    return output.getvalue()
+
+
 def _demo_assessment(case_data):
     return {
         "summary": (
@@ -409,15 +510,21 @@ def analyze_with_meta(case_data, images=None):
     """Use Meta Model API when configured; otherwise return clearly-labelled demo output."""
     api_key = os.getenv("MODEL_API_KEY")
     if not api_key:
+        app.logger.info("Meta assessment skipped: no MODEL_API_KEY is configured.")
         return {
             **_demo_assessment(case_data),
             "mode": "DEMO MODE — no Meta API key configured",
         }
 
     try:
-        from openai import OpenAI
+        from openai import OpenAI, OpenAIError
 
-        client = OpenAI(api_key=api_key, base_url="https://api.meta.ai/v1")
+        client = OpenAI(
+            api_key=api_key,
+            base_url=META_API_BASE_URL,
+            timeout=META_API_TIMEOUT_SECONDS,
+            max_retries=1,
+        )
         prompt = f"""
 You are FarmOps AI, an assistant for agricultural extension workers.
 You are NOT a substitute for local expert assessment. Do not confidently diagnose
@@ -440,32 +547,62 @@ these keys and types:
 }}
 
 Case data:
-{json.dumps(case_data, ensure_ascii=False)}
+{json.dumps(_case_data_for_meta(case_data), ensure_ascii=False)}
 """
         content = [{"type": "input_text", "text": prompt}]
         for mime_type, image_bytes in images or []:
-            encoded = base64.b64encode(image_bytes).decode("ascii")
+            sanitized_image = _image_without_metadata(mime_type, image_bytes)
+            encoded = base64.b64encode(sanitized_image).decode("ascii")
             content.append({
                 "type": "input_image",
                 "image_url": f"data:{mime_type};base64,{encoded}",
             })
+        model_id = os.getenv("META_MODEL_ID", DEFAULT_META_MODEL)
         response = client.responses.create(
-            model=os.getenv("META_MODEL_ID", "muse-spark-1.3"),
+            model=model_id,
             input=[{"role": "user", "content": content}],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "farmops_assessment",
+                    "strict": True,
+                    "schema": ASSESSMENT_JSON_SCHEMA,
+                }
+            },
         )
         parsed = validate_assessment(json.loads(response.output_text))
-        return {**parsed, "mode": "Meta Model API"}
-    except Exception as exc:
-        app.logger.exception("Meta assessment failed; using fallback output.")
+        actual_model = getattr(response, "model", None) or model_id
+        app.logger.info("Meta assessment succeeded (model=%s).", actual_model)
         return {
-            **_demo_assessment(case_data),
-            "mode": "Fallback mode — Meta API request failed",
-            "summary": f"Case received for {case_data['crop']} at {case_data['farm_name']}.",
-            "uncertainty": (
-                "No AI assessment was produced. Check API key, model access, and API response. "
-                f"Technical detail: {type(exc).__name__}"
-            ),
+            **parsed,
+            "mode": "Meta Model API",
+            "model": actual_model,
         }
+    except ImportError as exc:
+        return _meta_fallback(case_data, exc)
+    except (OpenAIError, OSError, ValueError, TypeError, AttributeError) as exc:
+        return _meta_fallback(case_data, exc)
+
+
+def _meta_fallback(case_data, exc):
+    status_code = getattr(exc, "status_code", None)
+    technical_detail = type(exc).__name__
+    if isinstance(status_code, int):
+        technical_detail = f"{technical_detail} (HTTP {status_code})"
+    app.logger.warning(
+        "Meta assessment failed (%s); using fallback output.",
+        technical_detail,
+    )
+    return {
+        **_demo_assessment(case_data),
+        "mode": "Fallback mode — Meta API request failed",
+        "model": "",
+        "summary": f"Case received for {case_data['crop']} at {case_data['farm_name']}.",
+        "uncertainty": (
+            "No AI assessment was produced. Check API key, model access, and API response. "
+            f"Technical detail: {technical_detail}"
+        ),
+    }
 
 
 def _read_uploaded_photos(files):
@@ -847,9 +984,9 @@ def new_case():
                     (farm_name, reporter_name, location, crop, issue_type, description,
                      urgency, ai_summary, next_steps, uncertainty, observations, hypotheses,
                      missing_information, follow_up_questions, evidence_paths, district,
-                     observed_at, latitude, longitude, observation_ref, review_status,
-                     status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     observed_at, latitude, longitude, observation_ref, assessment_source,
+                     assessment_model, review_status, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     data["farm_name"], data["reporter_name"], data["location"], data["crop"],
                     data["issue_type"], data["description"], result.get("urgency", "Needs review"),
@@ -865,6 +1002,8 @@ def new_case():
                     latitude,
                     longitude,
                     data["observation_ref"],
+                    result.get("mode", "Unknown"),
+                    result.get("model", ""),
                     "Pending review",
                     "Open",
                     utc_timestamp(),
@@ -879,6 +1018,8 @@ def new_case():
                         "district": district,
                         "observed_at": observed_at,
                         "observation_ref": data["observation_ref"],
+                        "assessment_source": result.get("mode", "Unknown"),
+                        "assessment_model": result.get("model", ""),
                     },
                 )
                 for (extension, mime_type, content, original_name), stored_name in zip(
@@ -1383,8 +1524,8 @@ def seed_demo_data():
                     urgency, ai_summary, next_steps, uncertainty, observations, hypotheses,
                     missing_information, follow_up_questions, evidence_paths, district,
                     observed_at, latitude, longitude, is_synthetic, review_status,
-                    observation_ref, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, 1, ?, ?, 'Open', ?)
+                    observation_ref, assessment_source, assessment_model, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, 1, ?, ?, 'SYNTHETIC DEMO', '', 'Open', ?)
             """, (
                 f"Synthetic Demo Plot {index + 1}",
                 "Synthetic field officer",

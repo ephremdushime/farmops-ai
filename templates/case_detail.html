@@ -44,7 +44,7 @@
     </form>
   </section>
   <section class="panel plan-panel">
-    <p class="eyebrow">AI ASSESSMENT · HUMAN VERIFICATION REQUIRED</p>
+    <p class="eyebrow">ASSESSMENT SOURCE · {{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN (LEGACY REPORT)') }}{% if case['assessment_model'] %} · MODEL {{ case['assessment_model'] }}{% endif %} · HUMAN VERIFICATION REQUIRED</p>
     <h2>Summary and next steps</h2>
     <p>{{ case['ai_summary'] }}</p>
     {% if observations %}<h3>Reported observations</h3><ul class="assessment-list">{% for item in observations %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}

@@ -43,7 +43,7 @@ cp .env.example .env
 python app.py
 ```
 
-Set `MODEL_API_KEY` in your environment before launching to enable Meta Model API requests. On Windows PowerShell:
+Copy `.env.example` to `.env` and set `MODEL_API_KEY` there, or set it in the process environment before launching. The app loads `.env` from the repository root without overriding values already present in the process environment. `.env` is ignored by Git. On Windows PowerShell:
 
 ```powershell
 $env:MODEL_API_KEY="your-key"
@@ -90,9 +90,11 @@ Keep the environment variable set in the same terminal when running the app. Do 
 
 ## Meta Model API
 
-The app uses the OpenAI Python SDK with Meta's OpenAI-compatible base URL `https://api.meta.ai/v1` and the Responses API. The default model is `muse-spark-1.3`. Confirm the model ID and access in your account's current documentation/dashboard.
+The app uses the OpenAI Python SDK with Meta's OpenAI-compatible base URL `https://api.meta.ai/v1` and the Responses API. The default model is `muse-spark-1.3`; `META_MODEL_ID` can override it. Requests have a 60-second timeout, one SDK retry, and request a strict JSON schema before validating the response locally.
 
-When configured, attached images are sent with the report to Meta. Review the provider's data handling requirements before using non-synthetic evidence. The map uses Leaflet and OpenStreetMap tile services; map tiles are requested by the user's browser.
+When configured, only crop, issue category, observation date, and description are sent from the report fields; reporter/farm names and location metadata are excluded, with matching identifiers redacted from the description. Photos are sent for analysis after EXIF and other image metadata are removed; the original photo remains stored locally. Visible people, labels, and personal details in the description or image pixels are not automatically redacted, so use synthetic or appropriately consented evidence. The case page permanently records whether its assessment came from Meta, demo mode, fallback mode, or synthetic demo data, and shows the returned model ID when available. API logs record the model on success and the exception type on fallback, not the prompt or API key.
+
+The `python test_meta_api.py` smoke test reads credentials from `.env` or the process environment, makes one generic request, and never prints the key or full error response. It exits without making a network request if no key is configured. The map uses Leaflet and OpenStreetMap tile services; map tiles are requested by the user's browser.
 
 ## Demo cases
 

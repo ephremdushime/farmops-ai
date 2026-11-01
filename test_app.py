@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import importlib
@@ -10,6 +11,8 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from PIL import Image, PngImagePlugin
 
 
 class FarmOpsSmokeTests(unittest.TestCase):
@@ -84,10 +87,16 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"Yellowing leaves reported after heavy rain.", detail.data)
         self.assertIn(b"Questions for the reporter", detail.data)
         self.assertIn(b"When did you first notice the problem?", detail.data)
+        self.assertIn(b"DEMO MODE", detail.data)
         with self.module.db() as conn:
-            observation_ref = conn.execute(
-                "SELECT observation_ref FROM cases WHERE id=?", (case_id,)
-            ).fetchone()[0]
+            row = conn.execute(
+                "SELECT observation_ref, assessment_source, assessment_model "
+                "FROM cases WHERE id=?",
+                (case_id,),
+            ).fetchone()
+            observation_ref = row["observation_ref"]
+            self.assertIn("DEMO MODE", row["assessment_source"])
+            self.assertEqual(row["assessment_model"], "")
         self.assertRegex(observation_ref, r"^OBS-[A-F0-9]{12}$")
         self.assertIn(observation_ref.encode(), detail.data)
 
@@ -140,9 +149,15 @@ class FarmOpsSmokeTests(unittest.TestCase):
         client.responses.create.return_value = SimpleNamespace(
             output_text=json.dumps(payload)
         )
-        image_bytes = b"\x89PNG\r\n\x1a\nfake-image-data"
+        image_info = PngImagePlugin.PngInfo()
+        image_info.add_text("Author", "Private Reporter Name")
+        image = Image.new("RGB", (4, 4), color=(40, 120, 60))
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="PNG", pnginfo=image_info)
+        image_bytes = image_buffer.getvalue()
         with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
             with patch("openai.OpenAI", return_value=client):
+                client.responses.create.return_value.model = "muse-spark-1.3"
                 response = self.client.post(
                     "/cases/new",
                     data={
@@ -167,9 +182,14 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertTrue(any(item["type"] == "input_image" for item in input_content))
         image_item = next(item for item in input_content if item["type"] == "input_image")
         self.assertTrue(image_item["image_url"].startswith("data:image/png;base64,"))
+        encoded_image = image_item["image_url"].split(",", 1)[1]
+        with Image.open(BytesIO(base64.b64decode(encoded_image))) as sent_image:
+            self.assertNotIn("Author", sent_image.info)
 
         with self.module.db() as conn:
-            row = conn.execute("SELECT id, evidence_paths FROM cases").fetchone()
+            row = conn.execute(
+                "SELECT id, evidence_paths, assessment_source, assessment_model FROM cases"
+            ).fetchone()
             case_id = row["id"]
             filenames = json.loads(row["evidence_paths"])
             evidence_metadata = conn.execute(
@@ -179,6 +199,8 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertEqual((self.module.UPLOAD_DIR / filenames[0]).read_bytes(), image_bytes)
         self.assertEqual(evidence_metadata["original_name"], "leaf.png")
         self.assertEqual(evidence_metadata["sha256"], hashlib.sha256(image_bytes).hexdigest())
+        self.assertEqual(row["assessment_source"], "Meta Model API")
+        self.assertEqual(row["assessment_model"], "muse-spark-1.3")
         self.assertIn(b"SHA-256", self.client.get(f"/cases/{case_id}").data)
 
         evidence = self.client.get(f"/cases/{case_id}/evidence/{filenames[0]}")
@@ -191,6 +213,19 @@ class FarmOpsSmokeTests(unittest.TestCase):
             404,
         )
         self.assertIn(b"Field photographs", self.client.get(f"/cases/{case_id}").data)
+
+    def test_jpeg_metadata_is_removed_before_meta_analysis(self):
+        image = Image.new("RGB", (4, 4), color=(40, 120, 60))
+        exif = Image.Exif()
+        exif[315] = "Private Reporter Name"
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="JPEG", exif=exif)
+
+        sanitized = self.module._image_without_metadata(
+            "image/jpeg", image_buffer.getvalue()
+        )
+        with Image.open(BytesIO(sanitized)) as meta_image:
+            self.assertEqual(dict(meta_image.getexif()), {})
 
     def test_rejects_image_with_mismatched_contents(self):
         with patch.object(self.module, "analyze_with_meta") as analyze:
@@ -470,31 +505,59 @@ class FarmOpsSmokeTests(unittest.TestCase):
         }
         client = Mock()
         client.responses.create.return_value = SimpleNamespace(
-            output_text=json.dumps(payload)
+            output_text=json.dumps(payload),
+            model="muse-spark-1.3",
         )
+        case_data = {
+            "farm_name": "PRIVATE FARM ALPHA",
+            "reporter_name": "PRIVATE REPORTER BETA",
+            "location": "PRIVATE LOCATION GAMMA",
+            "district": "PRIVATE DISTRICT DELTA",
+            "latitude": "-1.95",
+            "longitude": "30.06",
+            "observation_ref": "OBS-PRIVATE-1234",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "observed_at": "2026-10-30",
+            "description": (
+                "PRIVATE REPORTER BETA saw yellowing at PRIVATE FARM ALPHA "
+                "near PRIVATE LOCATION GAMMA."
+            ),
+        }
         with patch.dict(os.environ, {"MODEL_API_KEY": "test-key", "META_MODEL_ID": "test-model"}):
             with patch("openai.OpenAI", return_value=client) as openai_client:
                 result = self.module.analyze_with_meta(
-                    {
-                        "farm_name": "Demo Farm",
-                        "reporter_name": "Field Officer",
-                        "location": "Demo District",
-                        "crop": "Maize",
-                        "issue_type": "Visible crop change",
-                        "description": "Yellowing leaves after heavy rain.",
-                    }
+                    case_data
                 )
 
         self.assertEqual(result["mode"], "Meta Model API")
+        self.assertEqual(result["model"], "muse-spark-1.3")
         self.assertEqual(result["urgency"], "Soon")
         self.assertEqual(len(result["steps"]), 3)
         self.assertEqual(result["follow_up_questions"], payload["follow_up_questions"])
         openai_client.assert_called_once_with(
-            api_key="test-key", base_url="https://api.meta.ai/v1"
+            api_key="test-key",
+            base_url="https://api.meta.ai/v1",
+            timeout=60.0,
+            max_retries=1,
         )
         self.assertEqual(
             client.responses.create.call_args.kwargs["model"], "test-model"
         )
+        request = client.responses.create.call_args.kwargs
+        self.assertEqual(request["text"]["format"]["type"], "json_schema")
+        prompt = request["input"][0]["content"][0]["text"]
+        for private_value in (
+            "PRIVATE FARM ALPHA",
+            "PRIVATE REPORTER BETA",
+            "PRIVATE LOCATION GAMMA",
+            "PRIVATE DISTRICT DELTA",
+            "OBS-PRIVATE-1234",
+            "-1.95",
+            "30.06",
+        ):
+            self.assertNotIn(private_value, prompt)
+        self.assertIn("[redacted]", prompt)
 
     def test_invalid_meta_assessment_uses_labelled_fallback(self):
         client = Mock()
@@ -503,7 +566,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
         )
         with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
             with patch("openai.OpenAI", return_value=client):
-                with self.assertLogs("app", level="ERROR"):
+                with self.assertLogs("app", level="WARNING"):
                     result = self.module.analyze_with_meta(
                         {
                             "farm_name": "Demo Farm",
@@ -574,10 +637,22 @@ class FarmOpsSmokeTests(unittest.TestCase):
                 self.assertEqual(json.loads(row["observations"]), [])
                 self.assertEqual(json.loads(row["follow_up_questions"]), [])
                 self.assertEqual(row["observation_ref"], "")
+                self.assertEqual(row["assessment_source"], "")
+                self.assertEqual(row["assessment_model"], "")
                 task = conn.execute("SELECT * FROM tasks WHERE title='Legacy task'").fetchone()
                 self.assertEqual(task["outcome"], "")
         finally:
             self.module.DB_PATH = original_db_path
+
+    def test_dotenv_loading_respects_process_environment_precedence(self):
+        env_file = Path(self.temp_dir.name) / "test.env"
+        env_file.write_text("MODEL_API_KEY=dotenv-test-key\n", encoding="utf-8")
+        with patch.dict(os.environ, {"MODEL_API_KEY": "process-test-key"}):
+            self.module.load_environment(env_file)
+            self.assertEqual(os.environ["MODEL_API_KEY"], "process-test-key")
+            os.environ.pop("MODEL_API_KEY")
+            self.module.load_environment(env_file)
+            self.assertEqual(os.environ["MODEL_API_KEY"], "dotenv-test-key")
 
 
 if __name__ == "__main__":

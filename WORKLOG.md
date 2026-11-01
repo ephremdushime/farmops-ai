@@ -43,6 +43,15 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - `python -m py_compile app.py test_app.py test_meta_api.py` and `git diff --check` passed.
 - A live Meta Model API request remains unverified because no API key is configured.
 
+## 2026-11-01 — Meta Model API integration audit
+- Verified current Meta docs for `https://api.meta.ai/v1`, `muse-spark-1.3`, the OpenAI-compatible Responses API, `output_text`, and inline image input.
+- Added root `.env` loading with process-environment precedence; `.env` remains ignored and unchanged.
+- Limited Meta text input to crop, issue category, observation date, and symptom description; removed known reporter/farm/location/district identifiers from the description before sending.
+- Removed image metadata from API copies while preserving original local evidence; added visible disclosure of what is shared and the remaining image/text content risks.
+- Added strict JSON-schema output plus local validation, an explicit request timeout/retry policy, and persistent source/model attribution with privacy-conscious success/fallback logs.
+- Reworked the manual API smoke script to use environment credentials only, avoid printing keys or full error bodies, and skip network access when no key is configured.
+- Validation: 18 tests passed; Python compilation and `git diff --check` passed. Live API request skipped because there is no `.env` and `MODEL_API_KEY` is not set in the process environment.
+
 ## Next validation steps
 - [ ] Confirm Meta Model API key and model access.
 - [ ] Test the first real model request.
