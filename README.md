@@ -16,7 +16,7 @@ Agricultural extension workers often need to gather incomplete reports, decide w
 - Case status tracking.
 - Six operational views: overview, live field reports, intelligence cases, risk map, verification centre, and response operations.
 - Required observation date and district, optional paired latitude/longitude, and stable observation reference IDs.
-- Explainable report-completeness indicator based on five recorded evidence fields; it is not diagnosis confidence.
+- Explainable report-completeness indicator across eight evidence dimensions; it is not diagnosis confidence.
 - Candidate spatial clusters require matching crop and issue category and pairwise proximity within 30 km and 14 days. The 0–100 linkage signal starts at 25, adds up to 25 for report count, 25 for proximity and 25 for time proximity. It is a review-priority heuristic, not an outbreak probability.
 - Optional Meta Model API integration using Muse Spark.
 - Structured assessments that separate observations, tentative hypotheses, missing information, follow-up questions, and coordinated actions.
@@ -115,4 +115,4 @@ Keep a dated log of original contributions, tests, and limitations as they are i
 
 ## License
 
-No license has been selected yet. Choose a license before inviting reuse or accepting outside contributions.
+MIT License — see [LICENSE](LICENSE).
