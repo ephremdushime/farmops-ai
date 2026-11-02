@@ -44,11 +44,11 @@ Record at 1080p, light theme, browser 100% zoom. Narration ~430 words ≈ 2:45 a
 | 5 | 1:55 | `#officer-review` | Scroll the form (prefilled corrections, hypothesis dispositions). Submit a "Verified" review as a demo officer. Show the audit entry + compare block. |
 | 6 | 2:20 | `/risk-map`, `/intelligence` | Pan the map, open a marker popup. Switch to Intelligence: one cluster card, its metrics, one inclusion reason. End on overview. |
 
-## If something goes wrong live
+## Recording notes
 
-- API slow: the loading state covers up to ~60 s; keep narrating over it.
-- API fails: the labelled fallback is itself a feature ("Model request failed; fallback shown") — mention honesty-by-design and move on. Do NOT debug on camera.
-- Wrong click: pause 2 s, navigate back, keep recording — cut in edit.
+- The submit buttons show progress text during the model call; keep narrating over it.
+- If the API is unreachable, the app shows its labelled fallback state instead of failing silently. That honesty-by-design is part of the demo, so keep going.
+- For a wrong click, pause, navigate back, and keep recording; trim in edit.
 
 ## After recording
 
