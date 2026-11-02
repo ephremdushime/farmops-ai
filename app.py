@@ -72,6 +72,8 @@ VOICE_TRANSCRIBE_URL = META_API_BASE_URL + "/asr/transcribe"
 VOICE_TRANSCRIBE_TIMEOUT_SECONDS = 300.0
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
 

@@ -84,3 +84,12 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - Transcript stored as a case note, appended to the Muse Spark assessment input, and playable from the case page; audio served privately with no-store.
 - Graceful notices when the API key, requests, or ffmpeg is missing; voice never counts as photo evidence in completeness.
 - Validation: `python -m unittest` -- 43 tests passed; live E2E verified (real transcribe plus spark assessment on synthetic speech).
+
+## Competition readiness sprint (Nov 2)
+- Phase 1: fixed the risk_map.js attribution SyntaxError that broke all maps; node --check clean on 4 scripts; theme/fallback/empty-map behaviors verified with a stubbed harness; CARTO and OSM tiles return 200.
+- Phase 2: reassessment now sends images only (voice rows no longer poison the image payload); assessment history shows per-run changes; failure tests cover malformed JSON, SDK timeout, and HTTP 401.
+- Phase 3: cluster explanations name crop, issue, and date range; each member carries an inclusion reason shown on the Intelligence page; 30 km/14-day rules held.
+- Phase 4: review audit compares original AI observations/hypotheses with officer-verified versions; dispositions cite the original text; urgency changes flagged; append-only history locked by tests.
+- Phase 5: AI forms show loading states and block double-posts; provenance shows assessment time; field reports gain a review-status filter and clear link.
+- Phase 6: session cookies hardened (HttpOnly, SameSite=Lax); verified no secrets in tracked files or history, no key material in logs/responses, prototype labelling on every page; CSRF tokens documented as deployment-required.
+- Validation: `python -m unittest` -- 58 tests passed; `node --check` clean on all app scripts.

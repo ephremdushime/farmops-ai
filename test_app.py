@@ -1543,6 +1543,35 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"assessed ", detail)
         self.assertIn(created_at.encode(), detail)
 
+    def test_session_cookie_hardening(self):
+        self.assertTrue(self.module.app.config["SESSION_COOKIE_HTTPONLY"])
+        self.assertEqual(self.module.app.config["SESSION_COOKIE_SAMESITE"], "Lax")
+
+    def test_evidence_route_rejects_traversal(self):
+        case_id = self.create_case()
+        self.assertEqual(
+            self.client.get(f"/cases/{case_id}/evidence/..%2Fapp.py").status_code, 404
+        )
+        self.assertEqual(
+            self.client.get(f"/cases/{case_id}/evidence/..%2F..%2F..%2Fenv").status_code, 404
+        )
+
+    def test_api_key_never_leaks_into_responses_or_logs(self):
+        secret = "test-key-must-never-leak-12345"
+        client = Mock()
+        client.responses.create.side_effect = openai.APIConnectionError(request=Mock())
+        with patch.dict(os.environ, {"MODEL_API_KEY": secret}):
+            with patch("openai.OpenAI", return_value=client):
+                with self.assertLogs("app", level="INFO") as captured:
+                    created = self.client.post("/cases/new", data=self._voice_case_fields())
+        self.assertEqual(created.status_code, 302)
+        with self.module.db() as conn:
+            case_id = conn.execute("SELECT MAX(id) FROM cases").fetchone()[0]
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertNotIn(secret.encode(), detail)
+        combined_logs = "\n".join(captured.output)
+        self.assertNotIn(secret, combined_logs)
+
 
 if __name__ == "__main__":
     unittest.main()

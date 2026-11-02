@@ -108,7 +108,7 @@ The prototype should ask for missing information and coordinate review. It shoul
 
 ## Scope and limitations
 
-This is an early hackathon prototype, not production-ready software. It has not undergone security, agronomic, accessibility, or field validation review. Authentication, role-based access, deployment hardening, offline capture/synchronization, external weather or government data, satellite integrations, and validated yield forecasting remain future work. Muse Spark is used for language/image interpretation, not crop-yield forecasting. Spatial groupings are candidate links from simple distance/time/category rules, not validated disease or outbreak detections.
+This is an early hackathon prototype, not production-ready software. It has not undergone security, agronomic, accessibility, or field validation review. Authentication, role-based access, deployment hardening, offline capture/synchronization, external weather or government data, satellite integrations, and validated yield forecasting remain future work. The prototype has no CSRF tokens or sign-in; session cookies are HttpOnly and SameSite=Lax, and any deployment must add CSRF protection, HTTPS-only cookies, and a production FLASK_SECRET_KEY. Muse Spark is used for language/image interpretation, not crop-yield forecasting. Spatial groupings are candidate links from simple distance/time/category rules, not validated disease or outbreak detections.
 
 ## Hackathon work log
 
