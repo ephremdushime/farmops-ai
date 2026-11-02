@@ -1395,6 +1395,40 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"+1 observations", detail)
         self.assertIn(b"summary updated", detail)
 
+    def _cluster_pair(self):
+        first_id = self.create_case()
+        nearby_id = self.create_case()
+        today = self.module.datetime.now(self.module.timezone.utc).date()
+        with self.module.db() as conn:
+            conn.execute(
+                "UPDATE cases SET latitude=-1.95, longitude=30.06, observed_at=? WHERE id=?",
+                (today.isoformat(), first_id),
+            )
+            conn.execute(
+                "UPDATE cases SET latitude=-1.96, longitude=30.07, observed_at=? WHERE id=?",
+                (today.isoformat(), nearby_id),
+            )
+            cases = conn.execute("SELECT * FROM cases ORDER BY id").fetchall()
+        return today, self.module.build_risk_clusters(cases)
+
+    def test_cluster_explanation_names_match_criteria(self):
+        today, clusters = self._cluster_pair()
+        self.assertEqual(len(clusters), 1)
+        explanation = clusters[0]["explanation"]
+        self.assertIn("Maize", explanation)
+        self.assertIn("Visible crop change", explanation)
+        self.assertIn(today.isoformat(), explanation)
+        self.assertIn("not an outbreak probability", explanation)
+
+    def test_cluster_members_carry_inclusion_reasons(self):
+        today, clusters = self._cluster_pair()
+        self.assertEqual(len(clusters), 1)
+        for report in clusters[0]["reports"]:
+            reason = report.get("inclusion_reason", "")
+            self.assertIn("km from the furthest member", reason)
+            self.assertIn(today.isoformat(), reason)
+        self.assertIn(b"km from the furthest member", self.client.get("/intelligence").data)
+
 
 if __name__ == "__main__":
     unittest.main()

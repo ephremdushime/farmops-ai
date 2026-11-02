@@ -10,7 +10,7 @@
   <div class="panel-head"><div><p class="eyebrow">POTENTIAL RISK CLUSTER · {{ loop.index }}</p><h2>{{ cluster['crop'] }} · {{ cluster['issue_type'] }}</h2></div><span class="signal-pill">{{ cluster['signal_label'] }} · {{ cluster['signal'] }}/100</span></div>
   <p>{{ cluster['explanation'] }}</p>
   <div class="cluster-metrics"><span><strong>{{ cluster['count'] }}</strong> reports</span><span><strong>{{ cluster['max_distance_km'] }} km</strong> max pair distance</span><span><strong>{{ cluster['day_span'] }} days</strong> time span</span></div>
-  <ul class="cluster-reports">{% for report in cluster['reports'] %}<li><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['farm_name'] }}</a><span>{{ report['district'] }} · {{ report['observed_at'] }} · {{ report['review_status'] }}</span></li>{% endfor %}</ul>
+  <ul class="cluster-reports">{% for report in cluster['reports'] %}<li><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['farm_name'] }}</a><span>{{ report['district'] }} · {{ report['observed_at'] }} · {{ report['review_status'] }}</span><small class="inclusion-reason">{{ report['inclusion_reason'] }}</small></li>{% endfor %}</ul>
 </article>
 {% endfor %}</section>
 {% else %}<div class="empty"><h3>No spatially linkable reports</h3><p>Reports need coordinates and dates before candidate clusters can be evaluated.</p></div>{% endif %}

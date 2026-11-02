@@ -457,6 +457,17 @@ def build_risk_clusters(cases, radius_km=30, window_days=14):
                 continue
 
             members = [report for report in reports if report["id"] in component]
+            for member in members:
+                others = [other for other in members if other["id"] != member["id"]]
+                furthest = max(
+                    _distance_km(member["coordinates"], other["coordinates"])
+                    for other in others
+                )
+                member["inclusion_reason"] = (
+                    f"Same crop and issue; {furthest:.1f} km from the furthest "
+                    f"member; observed {member['cluster_date'].isoformat()} "
+                    f"(within {window_days} days of all members)"
+                )
             pair_distances = [
                 _distance_km(members[i]["coordinates"], members[j]["coordinates"])
                 for i in range(len(members))
@@ -492,10 +503,12 @@ def build_risk_clusters(cases, radius_km=30, window_days=14):
                     else "Low linkage signal"
                 ),
                 "explanation": (
-                    f"{len(members)} reports share crop and issue category, fall within "
-                    f"{max_distance:.1f} km of one another, and span {day_span} days "
-                    f"(limits: {radius_km} km and {window_days} days). This is a review "
-                    "priority signal, not an outbreak probability or verified diagnosis."
+                    f"{len(members)} {members[0]['crop']} reports with issue "
+                    f"\u2018{members[0]['issue_type']}\u2019 observed "
+                    f"{min(dates).isoformat()} to {max(dates).isoformat()} "
+                    f"({day_span} days); every pair is within "
+                    f"{max_distance:.1f} km (limits: {radius_km} km and {window_days} days). "
+                    "This is a review priority signal, not an outbreak probability or verified diagnosis."
                 ),
             })
     return sorted(clusters, key=lambda cluster: (-cluster["signal"], cluster["id"]))
