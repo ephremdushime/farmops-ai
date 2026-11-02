@@ -2,7 +2,7 @@
 {% block title %}Intelligence Cases · FarmOps AI{% endblock %}
 {% block page_context %}Intelligence Cases{% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">PATTERN REVIEW · RULE-BASED CANDIDATES</p><h1>Intelligence cases</h1><p class="lead">Potentially related reports grouped by crop, issue category, observed date, and proximity. These signals prioritize human review; they do not establish an outbreak.</p></div><a class="button secondary" href="{{ url_for('risk_map') }}">View geospatial picture ↗</a></div>
+<div class="page-heading"><div><p class="eyebrow">PATTERN REVIEW · RULE-BASED CANDIDATES</p><h1>Intelligence cases</h1><p class="lead">Potentially related reports grouped by crop, issue category, observed date, and proximity. These signals prioritize human review; they do not establish an outbreak.</p></div><a class="button secondary" href="{{ url_for('intelligence_graph') }}">View relationship graph</a><a class="button secondary" href="{{ url_for('risk_map') }}">View geospatial picture ↗</a></div>
 <div class="notice"><strong>How linkage works:</strong> reports must share crop and issue category; every pair must be within 30 km and within 14 days. The 0–100 linkage signal starts at 25, adds up to 25 for report count, up to 25 for proximity, and up to 25 for time proximity. It is a transparent review-priority heuristic, not a probability or disease confidence.</div>
 {% if clusters %}
 <section class="cluster-list">{% for cluster in clusters %}

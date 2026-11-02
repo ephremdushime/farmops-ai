@@ -1786,6 +1786,43 @@ class FarmOpsSmokeTests(unittest.TestCase):
         ]
         self.assertEqual(offenders, [])
 
+    def test_graph_builder_produces_explained_edges(self):
+        today, clusters = self._cluster_pair()
+        with self.module.db() as conn:
+            cases = conn.execute("SELECT * FROM cases ORDER BY id").fetchall()
+        graph = self.module.build_relationship_graph(cases, clusters, {}, [])
+        kinds = [node["kind"] for node in graph["nodes"]]
+        self.assertEqual(kinds.count("report"), 2)
+        self.assertEqual(kinds.count("cluster"), 1)
+        self.assertEqual(len(graph["edges"]), 2)
+        self.assertTrue(all(edge["cls"] == "edge-rule" for edge in graph["edges"]))
+        self.assertIn("rule-generated", graph["edges"][0]["text"])
+        self.assertTrue(all(edge["d"].startswith("M ") for edge in graph["edges"]))
+        for node in graph["nodes"]:
+            self.assertTrue(node["url"].startswith("/cases/") or node["url"].startswith("/intelligence"))
+
+    def test_graph_page_shows_all_relationship_kinds(self):
+        today, clusters = self._cluster_pair()
+        with self.module.db() as conn:
+            first_id = conn.execute("SELECT MIN(id) FROM cases").fetchone()[0]
+        self.client.post(
+            f"/cases/{first_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="verified"),
+        )
+        page = self.client.get("/intelligence/graph").data
+        self.assertIn(b"<svg", page)
+        self.assertIn(b"edge-rule", page)
+        self.assertIn(b"edge-ai", page)
+        self.assertIn(b"edge-human-ok", page)
+        self.assertIn(b"(tentative)", page)
+        self.assertIn(b"human-confirmed", page)
+        self.assertIn(f"/cases/{first_id}".encode(), page)
+        self.assertIn(b"View relationship graph", self.client.get("/intelligence").data)
+
+    def test_graph_empty_state(self):
+        page = self.client.get("/intelligence/graph").data
+        self.assertIn(b"No unresolved reports", page)
+
 
 if __name__ == "__main__":
     unittest.main()

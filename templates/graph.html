@@ -1,0 +1,23 @@
+﻿{% extends "base.html" %}
+{% block title %}Relationship Graph · FarmOps AI{% endblock %}
+{% block page_context %}Relationship Graph{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">LINK ANALYSIS · EXPLAINABLE RELATIONSHIPS</p><h1>Relationship graph</h1><p class="lead">How {{ report_count }} unresolved reports connect to candidate clusters, officer decisions, and open evidence requests. Every edge carries its explanation; candidate links are review priorities, not confirmed outbreaks.</p></div><a class="button secondary" href="{{ url_for('intelligence_cases') }}">Back to intelligence cases</a></div>
+{% if graph['nodes'] %}
+<section class="panel">
+  <div class="graph-legend" aria-label="Relationship types"><span><i class="legend-swatch edge-rule"></i>Rule linkage (candidate cluster)</span><span><i class="legend-swatch edge-ai"></i>AI-suggested evidence request (tentative)</span><span><i class="legend-swatch edge-human-ok"></i>Officer verified</span><span><i class="legend-swatch edge-human-watch"></i>Officer follow-up</span><span><i class="legend-swatch edge-human-no"></i>Officer rejected</span></div>
+  <div class="graph-wrap">
+    <svg class="graph-svg" viewBox="0 0 {{ graph['width'] }} {{ graph['height'] }}" role="img" aria-label="Link chart of {{ graph['nodes']|length }} nodes and {{ graph['edges']|length }} explained relationships">
+      {% for edge in graph['edges'] %}<path class="{{ edge['cls'] }}" d="{{ edge['d'] }}"><title>{{ edge['title'] }}</title></path>{% endfor %}
+      {% for node in graph['nodes'] %}<a href="{{ node['url'] }}"><g class="node-{{ node['kind'] }}"><title>{{ node['label'] }} · {{ node['sub'] }}</title><rect x="{{ node['x'] }}" y="{{ node['y'] }}" width="{{ node['w'] }}" height="{{ node['h'] }}" rx="7"></rect><text x="{{ node['x'] + 10 }}" y="{{ node['y'] + 16 }}">{{ node['label'] }}</text><text class="sub" x="{{ node['x'] + 10 }}" y="{{ node['y'] + 30 }}">{{ node['sub'] }}</text></g></a>{% endfor %}
+    </svg>
+  </div>
+</section>
+<section class="panel">
+  <p class="eyebrow">TEXT EQUIVALENT</p><h2>All relationships</h2>
+  <ul class="insight-list">{% for edge in graph['edges'] %}<li><span>{{ edge['text'] }}</span></li>{% else %}<li><span>No relationships yet. Reports appear unlinked until clusters form, reviews are recorded, or evidence is requested.</span></li>{% endfor %}</ul>
+</section>
+{% else %}
+<div class="empty"><h3>No unresolved reports</h3><p>Submit an observation to start building the relationship graph.</p></div>
+{% endif %}
+{% endblock %}

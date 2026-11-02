@@ -601,6 +601,105 @@ def build_risk_clusters(cases, radius_km=30, window_days=14):
     return sorted(clusters, key=lambda cluster: (-cluster["signal"], cluster["id"]))
 
 
+def build_relationship_graph(cases, clusters, reviews_by_case, evidence_tasks):
+    """Lay out a link chart of reports, clusters, reviews, and evidence requests."""
+    def short(text, length):
+        text = str(text or "")
+        return text if len(text) <= length else text[: length - 1] + "\u2026"
+
+    ordered = []
+    seen = set()
+    for cluster in clusters:
+        for report in sorted(cluster["reports"], key=lambda item: item["id"]):
+            if report["id"] not in seen:
+                seen.add(report["id"])
+                ordered.append(report)
+    for case in sorted(cases, key=lambda item: item["id"]):
+        if case["id"] not in seen:
+            seen.add(case["id"])
+            ordered.append(case)
+    nodes = []
+    edges = []
+    report_y = {}
+    for index, report in enumerate(ordered):
+        y = 24 + index * 48
+        report_y[report["id"]] = y
+        nodes.append({
+            "id": f"r{report['id']}", "kind": "report",
+            "x": 10, "y": y, "w": 180, "h": 36,
+            "label": short(f"Case #{report['id']} \u00b7 {report['crop']}", 26),
+            "sub": short(f"{report['district']} \u00b7 {report['observed_at']}", 30),
+            "url": f"/cases/{report['id']}",
+        })
+    for pos, cluster in enumerate(clusters):
+        member_ys = [report_y[item["id"]] for item in cluster["reports"] if item["id"] in report_y]
+        cy = sum(member_ys) / len(member_ys) if member_ys else 24 + pos * 48
+        nodes.append({
+            "id": f"c{pos}", "kind": "cluster",
+            "x": 340, "y": cy - 20, "w": 200, "h": 40,
+            "label": short(f"{cluster['crop']} \u00b7 {cluster['count']} reports", 26),
+            "sub": short(cluster["signal_label"], 30),
+            "url": "/intelligence",
+        })
+        for report in cluster["reports"]:
+            if report["id"] not in report_y:
+                continue
+            edges.append({
+                "from": f"r{report['id']}", "to": f"c{pos}",
+                "cls": "edge-rule",
+                "title": f"Rule linkage: {cluster['explanation']}",
+                "text": f"Case #{report['id']} is a member of the {cluster['crop']} candidate cluster (rule-generated): {cluster['explanation']}",
+            })
+    for report in ordered:
+        review = reviews_by_case.get(report["id"])
+        if not review:
+            continue
+        decision = (review["decision"] or "").strip()
+        cls = {"verified": "edge-human-ok", "follow_up": "edge-human-watch"}.get(decision, "edge-human-no")
+        nodes.append({
+            "id": f"v{review['id']}", "kind": "review",
+            "x": 660, "y": report_y[report["id"]] - 2, "w": 190, "h": 40,
+            "label": short(f"{review['reviewer']}: {decision.replace('_', ' ').title()}", 26),
+            "sub": short(review["created_at"], 30),
+            "url": f"/cases/{report['id']}#officer-review",
+        })
+        edges.append({
+            "from": f"r{report['id']}", "to": f"v{review['id']}",
+            "cls": cls,
+            "title": f"Officer decision (human): {decision} by {review['reviewer']}",
+            "text": f"Case #{report['id']} \u2014 officer {review['reviewer']} decided \u2018{decision}\u2019 on {review['created_at']} (human-confirmed).",
+        })
+    tasks_by_case = {}
+    for task in evidence_tasks:
+        tasks_by_case.setdefault(task["case_id"], []).append(task)
+    ty = 24
+    for report in ordered:
+        for task in tasks_by_case.get(report["id"], []):
+            nodes.append({
+                "id": f"t{task['id']}", "kind": "task",
+                "x": 940, "y": ty, "w": 200, "h": 36,
+                "label": short(task["title"], 26),
+                "sub": "open evidence request",
+                "url": f"/cases/{report['id']}",
+            })
+            edges.append({
+                "from": f"r{report['id']}", "to": f"t{task['id']}",
+                "cls": "edge-ai",
+                "title": f"AI-suggested evidence request (tentative): {task['title']}",
+                "text": f"Case #{report['id']} \u2014 AI requested evidence (tentative): {task['title']}",
+            })
+            ty += 46
+    by_id = {node["id"]: node for node in nodes}
+    for edge in edges:
+        left, right = by_id[edge["from"]], by_id[edge["to"]]
+        x1, y1 = left["x"] + left["w"], left["y"] + left["h"] / 2
+        x2, y2 = right["x"], right["y"] + right["h"] / 2
+        mx = (x1 + x2) / 2
+        edge["d"] = f"M {x1} {y1} C {mx} {y1}, {mx} {y2}, {x2} {y2}"
+    height = max([node["y"] + node["h"] for node in nodes] + [80]) + 24
+    return {"nodes": nodes, "edges": edges, "width": 1160, "height": height}
+
+
 def _assessment_text(value, field, max_length=2000):
     if not isinstance(value, str) or not value.strip() or len(value) > max_length:
         raise ValueError(f"Assessment field '{field}' must be non-empty text.")
@@ -1523,6 +1622,22 @@ def intelligence_cases():
     return render_template(
         "intelligence.html", clusters=clusters, unclustered=unclustered
     )
+
+
+@app.route("/intelligence/graph")
+def intelligence_graph():
+    cases = _unresolved_cases()
+    clusters = build_risk_clusters(cases)
+    with db() as conn:
+        review_rows = conn.execute("SELECT * FROM case_reviews ORDER BY id").fetchall()
+        task_rows = conn.execute(
+            "SELECT * FROM tasks WHERE kind='evidence' AND status='Pending' ORDER BY id"
+        ).fetchall()
+    reviews_by_case = {}
+    for row in review_rows:
+        reviews_by_case[row["case_id"]] = row
+    graph = build_relationship_graph(cases, clusters, reviews_by_case, task_rows)
+    return render_template("graph.html", graph=graph, report_count=len(cases))
 
 
 @app.route("/risk-map")
