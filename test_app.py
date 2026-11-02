@@ -1,7 +1,9 @@
 import base64
 import re
 import hashlib
+import httpx
 import json
+import openai
 import importlib
 import os
 import sqlite3
@@ -1269,6 +1271,129 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertNotIn(b"Field photographs", detail)
         self.assertIn(b"Field voice notes", detail)
         self.assertIn(b">50%</strong>", detail)
+
+    def _assessment_payload(self, **overrides):
+        payload = {
+            "summary": "Summary A.",
+            "urgency": "Soon",
+            "observations": ["Observed yellowing."],
+            "hypotheses": ["Possibly water stress."],
+            "missing_information": ["Affected area size."],
+            "follow_up_questions": ["When did it start?"],
+            "steps": ["Step one.", "Step two.", "Step three."],
+            "uncertainty": "Field verification needed.",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _minimal_case_data(self):
+        return {
+            "farm_name": "Demo Farm",
+            "reporter_name": "Field Officer",
+            "location": "Demo District",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "description": "Yellowing leaves after heavy rain.",
+        }
+
+    def test_malformed_meta_response_uses_labelled_fallback(self):
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text="{not valid json"
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                result = self.module.analyze_with_meta(self._minimal_case_data())
+        self.assertEqual(result["mode"], "Fallback mode \u2014 Meta API request failed")
+        self.assertIn("No AI assessment was produced", result["uncertainty"])
+        self.assertIn("JSONDecodeError", result["uncertainty"])
+
+    def test_meta_timeout_uses_labelled_fallback(self):
+        client = Mock()
+        client.responses.create.side_effect = openai.APITimeoutError(Mock())
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                result = self.module.analyze_with_meta(self._minimal_case_data())
+        self.assertEqual(result["mode"], "Fallback mode \u2014 Meta API request failed")
+        self.assertIn("APITimeoutError", result["uncertainty"])
+
+    def test_meta_auth_failure_uses_labelled_fallback(self):
+        client = Mock()
+        client.responses.create.side_effect = openai.AuthenticationError(
+            "bad key",
+            response=httpx.Response(
+                401, request=httpx.Request("POST", "https://api.meta.ai/v1/responses")
+            ),
+            body=None,
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                result = self.module.analyze_with_meta(self._minimal_case_data())
+        self.assertEqual(result["mode"], "Fallback mode \u2014 Meta API request failed")
+        self.assertIn("AuthenticationError (HTTP 401)", result["uncertainty"])
+
+    def test_reassessment_excludes_voice_from_images(self):
+        case_id = self.create_case()
+        transcript = "Standing water in the low corner."
+        asr = SimpleNamespace(status_code=200, json=lambda: {"transcript": transcript})
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("app.requests") as asr_lib:
+                asr_lib.post.return_value = asr
+                follow = self.client.post(
+                    f"/cases/{case_id}/evidence",
+                    data={
+                        "note": "Evening revisit.",
+                        "author": "Field Officer",
+                        "voice_note": (
+                            BytesIO(self._wav_bytes()), "revisit.wav", "audio/wav",
+                        ),
+                    },
+                    content_type="multipart/form-data",
+                )
+        self.assertEqual(follow.status_code, 302)
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(self._assessment_payload())
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                rerun = self.client.post(f"/cases/{case_id}/reassess")
+        self.assertEqual(rerun.status_code, 302)
+        content = client.responses.create.call_args.kwargs["input"][0]["content"]
+        self.assertFalse(any(item["type"] == "input_image" for item in content))
+        self.assertIn(transcript, str(client.responses.create.call_args))
+        with self.module.db() as conn:
+            source = conn.execute(
+                "SELECT assessment_source FROM cases WHERE id=?", (case_id,)
+            ).fetchone()[0]
+        self.assertEqual(source, "Meta Model API")
+
+    def test_assessment_history_shows_run_changes(self):
+        first = self._assessment_payload(
+            summary="First summary.", urgency="Soon", observations=["One thing."]
+        )
+        second = self._assessment_payload(
+            summary="Second summary.", urgency="Urgent field review",
+            observations=["One thing.", "Another thing."],
+        )
+        client = Mock()
+        client.responses.create.side_effect = [
+            SimpleNamespace(output_text=json.dumps(first)),
+            SimpleNamespace(output_text=json.dumps(second)),
+        ]
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                created = self.client.post("/cases/new", data=self._voice_case_fields())
+                self.assertEqual(created.status_code, 302)
+                with self.module.db() as conn:
+                    case_id = conn.execute("SELECT MAX(id) FROM cases").fetchone()[0]
+                rerun = self.client.post(f"/cases/{case_id}/reassess")
+                self.assertEqual(rerun.status_code, 302)
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"Initial assessment.", detail)
+        self.assertIn("urgency Soon \u2192 Urgent field review".encode(), detail)
+        self.assertIn(b"+1 observations", detail)
+        self.assertIn(b"summary updated", detail)
 
 
 if __name__ == "__main__":

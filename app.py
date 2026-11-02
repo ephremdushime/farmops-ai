@@ -304,6 +304,52 @@ def _reports_with_quality(reports):
     return results
 
 
+def _describe_run_changes(previous, assessment, entry):
+    if previous is None:
+        return "Initial assessment."
+    prev_assessment, prev_source, prev_model = previous
+    changes = []
+    if prev_assessment.get("urgency") != assessment.get("urgency"):
+        changes.append(
+            f"urgency {prev_assessment.get('urgency')} \u2192 {assessment.get('urgency')}"
+        )
+    for field, label in (("observations", "observations"), ("hypotheses", "hypotheses")):
+        before = prev_assessment.get(field)
+        after = assessment.get(field)
+        before_n = len(before) if isinstance(before, list) else 0
+        after_n = len(after) if isinstance(after, list) else 0
+        if after_n > before_n:
+            changes.append(f"+{after_n - before_n} {label}")
+        elif after_n < before_n:
+            changes.append(f"{after_n - before_n} {label}")
+    if (prev_assessment.get("summary") or "") != (assessment.get("summary") or ""):
+        changes.append("summary updated")
+    if prev_source != entry.get("source"):
+        changes.append(f"source {prev_source} \u2192 {entry.get('source')}")
+    if (prev_model or "") != (entry.get("model") or ""):
+        changes.append(f"model {(entry.get('model') or 'unknown')}")
+    if not changes:
+        return "No assessment changes recorded."
+    return "; ".join(changes) + "."
+
+
+def _annotate_run_changes(runs):
+    annotated = []
+    previous = None
+    for run in runs:
+        entry = dict(run)
+        try:
+            assessment = json.loads(entry.get("assessment_json") or "{}")
+        except (ValueError, TypeError):
+            assessment = {}
+        if not isinstance(assessment, dict):
+            assessment = {}
+        entry["changes"] = _describe_run_changes(previous, assessment, entry)
+        annotated.append(entry)
+        previous = (assessment, entry.get("source"), entry.get("model"))
+    return annotated
+
+
 def _record_event(conn, case_id, event_type, actor, details):
     conn.execute(
         "INSERT INTO case_events (case_id, event_type, actor, details, created_at) "
@@ -1759,7 +1805,7 @@ def case_detail(case_id):
         evidence_metadata=evidence_metadata,
         events=event_history,
         notes=notes,
-        runs=runs,
+        runs=_annotate_run_changes(runs),
         review_assessment=_assessment_from_case(case),
         evidence_completeness=evidence_completeness(dict(case)),
         related_clusters=[
@@ -2091,7 +2137,11 @@ def reassess_case(case_id):
             + "\n".join(f"- {note}" for note in follow_ups)
         )
     images = []
-    for row in evidence_rows[:MAX_PHOTOS]:
+    photo_rows = [
+        row for row in evidence_rows
+        if (row["media_type"] or "").startswith("image/")
+    ]
+    for row in photo_rows[:MAX_PHOTOS]:
         path = UPLOAD_DIR / row["stored_name"]
         if path.is_file():
             images.append((row["media_type"], path.read_bytes()))

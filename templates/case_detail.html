@@ -106,7 +106,7 @@
     {% if runs %}
     <details class="runs-history">
       <summary><strong>Assessment history</strong> · {{ runs|length }} run{{ 's' if runs|length != 1 }}</summary>
-      <ol class="audit-list">{% for run in runs %}<li><time>{{ run['created_at'] }}</time><strong>Run {{ run['run_number'] }}</strong><span>{{ run['source'] }}{% if run['model'] %} · {{ run['model'] }}{% endif %}</span></li>{% endfor %}</ol>
+      <ol class="audit-list">{% for run in runs %}<li><time>{{ run['created_at'] }}</time><strong>Run {{ run['run_number'] }}</strong><span>{{ run['source'] }}{% if run['model'] %} · {{ run['model'] }}{% endif %}</span><em class="run-changes">{{ run['changes'] }}</em></li>{% endfor %}</ol>
     </details>
     {% endif %}
     <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}">
