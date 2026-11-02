@@ -1573,6 +1573,101 @@ class FarmOpsSmokeTests(unittest.TestCase):
         combined_logs = "\n".join(captured.output)
         self.assertNotIn(secret, combined_logs)
 
+    def test_validate_defaults_missing_consistency_notes(self):
+        result = self.module.validate_assessment(self._assessment_payload())
+        self.assertEqual(result["consistency_notes"], [])
+        with self.assertRaisesRegex(ValueError, "consistency_notes"):
+            self.module.validate_assessment(
+                self._assessment_payload(consistency_notes="not-a-list")
+            )
+
+    def test_consistency_notes_render_from_latest_run(self):
+        payload = self._assessment_payload(consistency_notes=[
+            "Voice transcript agrees with the written report.",
+            "No photographs provided; visual check impossible.",
+        ])
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(payload)
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                created = self.client.post("/cases/new", data=self._voice_case_fields())
+        self.assertEqual(created.status_code, 302)
+        with self.module.db() as conn:
+            case_id = conn.execute("SELECT MAX(id) FROM cases").fetchone()[0]
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"Evidence consistency", detail)
+        self.assertIn(b"Voice transcript agrees with the written report.", detail)
+        self.assertIn(b"visual check impossible", detail)
+
+    def test_consistency_section_absent_without_notes(self):
+        case_id = self.create_case()
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertNotIn(b"Evidence consistency", detail)
+
+    def test_consistency_prompt_requires_photo_restraint(self):
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(self._assessment_payload())
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                self.module.analyze_with_meta(self._minimal_case_data())
+        prompt = str(client.responses.create.call_args)
+        self.assertIn("Never state that a photograph confirms", prompt)
+        self.assertIn("consistency_notes", prompt)
+
+    def test_voice_transcribe_server_error_stores_notice(self):
+        fields = self._voice_case_fields()
+        fields["voice_note"] = (
+            BytesIO(self._wav_bytes()), "note.wav", "audio/wav",
+        )
+        asr = SimpleNamespace(status_code=500, json=lambda: {})
+        client = Mock()
+        client.responses.create.side_effect = openai.APIConnectionError(request=Mock())
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("app.requests") as asr_lib:
+                asr_lib.post.return_value = asr
+                with patch("openai.OpenAI", return_value=client):
+                    response = self.client.post(
+                        "/cases/new", data=fields, content_type="multipart/form-data",
+                    )
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            row = conn.execute("SELECT id FROM cases").fetchone()
+            note = conn.execute(
+                "SELECT note FROM case_notes WHERE case_id=?", (row["id"],)
+            ).fetchone()
+        self.assertIn("failed (HTTP 500", note["note"])
+
+    def test_reassessment_sends_new_follow_up_photo(self):
+        case_id = self.create_case()
+        image = Image.new("RGB", (4, 4), color=(40, 120, 60))
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="PNG")
+        follow = self.client.post(
+            f"/cases/{case_id}/evidence",
+            data={
+                "note": "Morning revisit with photo.",
+                "author": "Field Officer",
+                "photo": (BytesIO(image_buffer.getvalue()), "leaf.png", "image/png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(follow.status_code, 302)
+        client = Mock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps(self._assessment_payload())
+        )
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}):
+            with patch("openai.OpenAI", return_value=client):
+                rerun = self.client.post(f"/cases/{case_id}/reassess")
+        self.assertEqual(rerun.status_code, 302)
+        content = client.responses.create.call_args.kwargs["input"][0]["content"]
+        self.assertTrue(any(item["type"] == "input_image" for item in content))
+        self.assertIn("Morning revisit with photo.", str(client.responses.create.call_args))
+
 
 if __name__ == "__main__":
     unittest.main()
