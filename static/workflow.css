@@ -30,7 +30,7 @@
 .feed-item p { margin: 5px 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .feed-item small { color: var(--muted-light); font-size: 10px; }
 .feed-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-.synthetic-tag { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid var(--tag-amber-border); border-radius: 3px; color: var(--tag-amber-fg); background: var(--tag-amber-bg); font-size: 9px; font-weight: 750; letter-spacing: .45px; }
+.synthetic-tag { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid var(--tag-amber-border); border-radius: 3px; color: var(--tag-amber-fg); background: var(--tag-amber-bg); font-size: 11px; font-weight: 750; letter-spacing: .45px; }
 .cluster-section { margin-top: 20px; }
 .cluster-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
 .cluster-section-head h2 { margin: 0; font-size: 16px; }
@@ -41,7 +41,7 @@
 .cluster-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .cluster-card-top h3 { margin: 0; font-size: 13px; font-weight: 680; }
 .cluster-card-top p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
-.signal-pill { display: inline-flex; align-items: center; padding: 5px 8px; border: 1px solid var(--tag-amber-border); border-radius: 99px; color: var(--tag-amber-fg); background: var(--tag-amber-bg); font-size: 9px; font-weight: 680; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.signal-pill { display: inline-flex; align-items: center; padding: 5px 8px; border: 1px solid var(--tag-amber-border); border-radius: 99px; color: var(--tag-amber-fg); background: var(--tag-amber-bg); font-size: 11px; font-weight: 680; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .cluster-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
 .cluster-metrics span { padding: 6px 9px; border-radius: 5px; color: var(--muted); background: var(--panel-deep); font-size: 9px; font-variant-numeric: tabular-nums; }
 .cluster-metrics strong { color: var(--ink); }
@@ -179,7 +179,7 @@ a.stat:hover { border-color: var(--input-focus); }
 .evidence-quality p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
 .detail-grid h3, .panel h3 { margin: 15px 0 7px; font-size: 12px; font-weight: 700; }
 .plan-panel > p:not(.eyebrow) { color: var(--ink); font-size: 12px; }
-.plan-panel > .eyebrow { overflow-wrap: anywhere; padding: 7px 9px; border-radius: 5px; color: var(--tag-green-fg); background: var(--tag-green-bg); font-size: 9px; letter-spacing: .75px; }
+.plan-panel > .eyebrow { overflow-wrap: anywhere; padding: 8px 10px; border-radius: 5px; color: var(--tag-green-fg); background: var(--tag-green-bg); font-size: 11px; letter-spacing: .75px; }
 .assessment-list { padding-left: 17px; margin: 7px 0 13px; }
 .assessment-list li { padding: 0 0 5px 2px; color: var(--ink); font-size: 11px; }
 .steps { padding-left: 18px; margin: 12px 0; }

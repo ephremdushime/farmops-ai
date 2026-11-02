@@ -193,7 +193,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .flash { padding: 12px 15px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
 .flash.success { color: var(--tag-green-fg); border-color: var(--tag-green-border); background: var(--tag-green-bg); }
 .flash.error { color: var(--tag-red-fg); border-color: var(--tag-red-border); background: var(--tag-red-bg); }
-.pill { display: inline-flex; align-items: center; min-height: 23px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: var(--panel-deep); font-size: 10px; font-weight: 650; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 11px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: var(--panel-deep); font-size: 12px; font-weight: 650; white-space: nowrap; }
 .review-pill { color: var(--tag-green-fg); border-color: var(--tag-green-border); background: var(--tag-green-bg); }
 .empty { padding: 36px 20px; border: 1px dashed var(--btn-s-border); border-radius: 12px; text-align: center; background: var(--panel); }
 .empty h3 { margin: 0 0 6px; font-size: 15px; }
