@@ -78,14 +78,14 @@
 </section>
 
 <section class="panel watch-panel" aria-label="Operations watch">
-  <div class="feed-heading"><div><p class="eyebrow">OPERATIONS WATCH</p><h2>Unusual patterns</h2></div><span class="watch-window">Rule-based tripwires \u00b7 14 days</span></div>
+  <div class="feed-heading"><div><p class="eyebrow">OPERATIONS WATCH</p><h2>Unusual patterns</h2></div><span class="watch-window">Rule-based tripwires · 14 days</span></div>
   {% if watch_signals %}
   <ul class="watch-list">
     {% for signal in watch_signals %}
     <li class="watch-{{ signal['level'] }}">
       <span class="watch-sev">{{ signal['level'] }}</span>
       <div><strong>{{ signal['title'] }}</strong><p>{{ signal['detail'] }}</p></div>
-      <a href="{{ url_for(signal['endpoint']) }}">Review \u2192</a>
+      <a href="{{ url_for(signal['endpoint']) }}">Review →</a>
     </li>
     {% endfor %}
   </ul>

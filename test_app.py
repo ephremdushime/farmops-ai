@@ -1668,6 +1668,124 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertTrue(any(item["type"] == "input_image" for item in content))
         self.assertIn("Morning revisit with photo.", str(client.responses.create.call_args))
 
+    def test_resolve_requires_officer_review(self):
+        case_id = self.create_case()
+        blocked = self.client.post(
+            f"/cases/{case_id}/status", data={"status": "Resolved", "actor": "Officer One"}
+        )
+        self.assertEqual(blocked.status_code, 302)
+        with self.module.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT status FROM cases WHERE id=?", (case_id,)).fetchone()[0],
+                "Open",
+            )
+        reviewed = self.client.post(
+            f"/cases/{case_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="verified"),
+        )
+        self.assertEqual(reviewed.status_code, 302)
+        closed = self.client.post(
+            f"/cases/{case_id}/status", data={"status": "Resolved", "actor": "Officer One"}
+        )
+        self.assertEqual(closed.status_code, 302)
+        with self.module.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT status FROM cases WHERE id=?", (case_id,)).fetchone()[0],
+                "Resolved",
+            )
+            event = conn.execute(
+                "SELECT actor, details FROM case_events WHERE case_id=? AND event_type='case_status_changed'",
+                (case_id,),
+            ).fetchone()
+        details = json.loads(event["details"])
+        self.assertEqual(event["actor"], "Officer One")
+        self.assertEqual((details["from"], details["to"]), ("Open", "Resolved"))
+        self.assertEqual(details["reviewer"], "Officer One")
+        self.assertEqual(details["decision"], "verified")
+
+    def test_reopen_records_audit_event(self):
+        case_id = self.create_case()
+        self.client.post(
+            f"/cases/{case_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="verified"),
+        )
+        self.client.post(f"/cases/{case_id}/status", data={"status": "Resolved"})
+        reopened = self.client.post(f"/cases/{case_id}/status", data={"status": "Open"})
+        self.assertEqual(reopened.status_code, 302)
+        with self.module.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT status FROM cases WHERE id=?", (case_id,)).fetchone()[0],
+                "Open",
+            )
+            events = conn.execute(
+                "SELECT details FROM case_events WHERE case_id=? AND event_type='case_status_changed' ORDER BY id",
+                (case_id,),
+            ).fetchall()
+        self.assertEqual(
+            [(json.loads(e["details"])["from"], json.loads(e["details"])["to"]) for e in events],
+            [("Open", "Resolved"), ("Resolved", "Open")],
+        )
+
+    def test_loop_panel_tells_case_story(self):
+        case_id = self.create_case()
+        self.client.post(
+            f"/cases/{case_id}/review", data=self._review_payload(decision="follow_up")
+        )
+        tasked = self.client.post(
+            f"/cases/{case_id}/tasks", data={"title": "Visit low corner"}
+        )
+        self.assertEqual(tasked.status_code, 302)
+        noted = self.client.post(
+            f"/cases/{case_id}/evidence",
+            data={"note": "Standing water found.", "author": "Field Officer"},
+        )
+        self.assertEqual(noted.status_code, 302)
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            self.client.post(f"/cases/{case_id}/reassess")
+        detail = self.client.get(f"/cases/{case_id}").data
+        for heading in (b"Case story", b"Originally reported", b"Officer-verified",
+                        b"Field actions", b"What changed", b"Still unresolved"):
+            self.assertIn(heading, detail)
+        self.assertIn(b"Another visit is recommended", detail)
+        self.assertIn(b"Visit low corner", detail)
+        self.assertIn(b"officer requested follow-up", detail)
+        self.assertIn(b"field action(s) still pending", detail)
+        self.assertIn(b"Run 2:", detail)
+        self.assertIn(b"1 follow-up observations recorded.", detail)
+
+    def test_loop_panel_empty_state(self):
+        case_id = self.create_case()
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"No officer review yet.", detail)
+        self.assertIn(b"8 field action(s) still pending", detail)
+        self.assertIn(b"No reassessments yet.", detail)
+        self.assertIn(b"0 follow-up observations recorded.", detail)
+        self.assertIn(b"no officer review recorded", detail)
+        self.assertIn(b"Another visit is recommended", detail)
+        with self.module.db() as conn:
+            conn.execute("DELETE FROM tasks WHERE case_id=?", (case_id,))
+        cleared = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"No field actions assigned.", cleared)
+
+    def test_closed_case_shows_closure_state(self):
+        case_id = self.create_case()
+        self.client.post(
+            f"/cases/{case_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="verified"),
+        )
+        self.client.post(f"/cases/{case_id}/status", data={"status": "Resolved"})
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"marked Resolved", detail)
+        self.assertNotIn(b"Another visit is recommended", detail)
+
+    def test_templates_have_no_literal_unicode_escapes(self):
+        templates = Path(self.module.BASE_DIR, "templates")
+        offenders = [
+            path.name for path in sorted(templates.glob("*.html"))
+            if re.search(r"\\u[0-9a-fA-F]{4}", path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(offenders, [])
+
 
 if __name__ == "__main__":
     unittest.main()

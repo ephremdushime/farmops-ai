@@ -228,6 +228,9 @@ a.stat:hover { border-color: var(--input-focus); }
 .voice-note { margin: 0; display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; }
 .voice-note audio { width: 100%; }
 .voice-note figcaption { color: var(--muted); font-size: 10px; }
+.loop-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); margin-top: 10px; }
+.loop-grid h3 { font-size: 12px; margin: 0 0 6px; }
+.visit-banner ul { margin: 6px 0 0; padding-left: 18px; }
 .case-heading { align-items: flex-end; }
 .case-heading-main { min-width: 0; }
 .case-heading-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }

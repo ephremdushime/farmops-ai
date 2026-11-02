@@ -350,6 +350,76 @@ def _latest_consistency_notes(runs):
     return [note for note in notes if isinstance(note, str) and note.strip()][:8]
 
 
+def _build_loop_summary(case, runs, reviews, notes, tasks, missing_information):
+    annotated = _annotate_run_changes(runs)
+    latest_review = reviews[0] if reviews else None
+    reviewed = (latest_review or {}).get("reviewed_assessment", {}) or {}
+    if not isinstance(reviewed, dict):
+        reviewed = {}
+    reviewed_hypotheses = reviewed.get("hypotheses", [])
+    if not isinstance(reviewed_hypotheses, list):
+        reviewed_hypotheses = []
+    unresolved_hypotheses = [
+        entry.get("assessment", "")
+        for entry in reviewed_hypotheses
+        if isinstance(entry, dict) and entry.get("disposition") == "unresolved"
+    ]
+    verified_observations = reviewed.get("observations", [])
+    if not isinstance(verified_observations, list):
+        verified_observations = []
+    pending_tasks = [task["title"] for task in tasks if task["status"] == "Pending"]
+    reasons = []
+    if not latest_review:
+        reasons.append("no officer review recorded")
+    if pending_tasks:
+        reasons.append(f"{len(pending_tasks)} field action(s) still pending")
+    if missing_information:
+        reasons.append(f"{len(missing_information)} information item(s) still missing")
+    if unresolved_hypotheses:
+        reasons.append(f"{len(unresolved_hypotheses)} AI hypotheses still unresolved")
+    if latest_review and latest_review.get("decision") == "follow_up":
+        reasons.append("officer requested follow-up")
+    resolved = case["status"] == "Resolved"
+    return {
+        "reported": {
+            "text": case["description"],
+            "observed_at": case["observed_at"],
+            "district": case["district"],
+        },
+        "verified": None if not latest_review else {
+            "reviewer": latest_review["reviewer"],
+            "decision": (latest_review["decision"] or "").replace("_", " ").title(),
+            "created_at": latest_review["created_at"],
+            "observations": [o for o in verified_observations if isinstance(o, str)][:8],
+        },
+        "actions": [
+            {
+                "title": task["title"],
+                "status": task["status"],
+                "outcome": task["outcome"] or "",
+                "due_date": task["due_date"] or "",
+            }
+            for task in tasks
+        ],
+        "changes": [
+            {
+                "run_number": run["run_number"],
+                "changes": run.get("changes", ""),
+                "created_at": run["created_at"],
+            }
+            for run in annotated[1:]
+        ],
+        "followup_count": len(notes),
+        "unresolved": {
+            "pending_tasks": pending_tasks,
+            "missing_information": [m for m in missing_information if isinstance(m, str)][:8],
+            "unresolved_hypotheses": unresolved_hypotheses[:8],
+        },
+        "needs_visit": {"recommended": bool(reasons) and not resolved, "reasons": reasons},
+        "resolved": resolved,
+    }
+
+
 def _annotate_run_changes(runs):
     annotated = []
     previous = None
@@ -1856,6 +1926,7 @@ def case_detail(case_id):
         notes=notes,
         runs=_annotate_run_changes(runs),
         consistency_notes=_latest_consistency_notes(runs),
+        case_story=_build_loop_summary(case, runs, review_history, notes, tasks, structured_fields["missing_information"],),
         review_assessment=_assessment_from_case(case),
         evidence_completeness=evidence_completeness(dict(case)),
         related_clusters=[
@@ -2276,6 +2347,15 @@ def update_case_status(case_id):
         if not case:
             flash("Case not found.", "error")
             return redirect(url_for("index"))
+        closure_review = None
+        if status == "Resolved":
+            closure_review = conn.execute(
+                "SELECT reviewer, decision FROM case_reviews WHERE case_id=? ORDER BY id DESC",
+                (case_id,),
+            ).fetchone()
+            if not closure_review:
+                flash("An officer review is required before a case can be resolved.", "error")
+                return redirect(url_for("case_detail", case_id=case_id))
         conn.execute("UPDATE cases SET status=? WHERE id=?", (status, case_id))
         if case["status"] != status:
             _record_event(
@@ -2283,7 +2363,15 @@ def update_case_status(case_id):
                 case_id,
                 "case_status_changed",
                 request.form.get("actor", "").strip() or "Field team",
-                {"from": case["status"], "to": status},
+                {
+                    "from": case["status"],
+                    "to": status,
+                    **(
+                        {"reviewer": closure_review["reviewer"], "decision": closure_review["decision"]}
+                        if status == "Resolved" and closure_review
+                        else {}
+                    ),
+                },
             )
     flash("Case status updated.", "success")
     return redirect(url_for("case_detail", case_id=case_id))

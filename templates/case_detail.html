@@ -88,12 +88,13 @@
       <label>Case status
         <select name="status">{% for s in ['Open','In progress','Resolved'] %}<option {% if case['status']==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
       </label>
+      <label>Recorded by<input name="actor" maxlength="120" placeholder="Field team"></label>
       <button class="button secondary" type="submit">Update status</button>
     </form>
   </section>
   <section class="panel plan-panel">
     <p class="eyebrow">MODEL-ASSISTED ASSESSMENT · UNVERIFIED</p>
-    <div class="assessment-provenance"><span class="source-indicator {% if case['assessment_source']=='Meta Model API' %}source-meta{% elif case['is_synthetic'] %}source-synthetic{% else %}source-demo{% endif %}" aria-hidden="true"></span><span><strong>{{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN · LEGACY REPORT') }}</strong><small>{% if case['assessment_model'] %}Model {{ case['assessment_model'] }}{% elif case['assessment_source']=='DEMO MODE — no Meta API key configured' %}No model request was made{% elif case['assessment_source']=='Fallback mode — Meta API request failed' %}Model request failed; fallback shown{% else %}Human verification required{% endif %}{% if runs %} \u00b7 assessed {{ (runs|last)['created_at'] }}{% endif %}</small></span></div>
+    <div class="assessment-provenance"><span class="source-indicator {% if case['assessment_source']=='Meta Model API' %}source-meta{% elif case['is_synthetic'] %}source-synthetic{% else %}source-demo{% endif %}" aria-hidden="true"></span><span><strong>{{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN · LEGACY REPORT') }}</strong><small>{% if case['assessment_model'] %}Model {{ case['assessment_model'] }}{% elif case['assessment_source']=='DEMO MODE — no Meta API key configured' %}No model request was made{% elif case['assessment_source']=='Fallback mode — Meta API request failed' %}Model request failed; fallback shown{% else %}Human verification required{% endif %}{% if runs %} · assessed {{ (runs|last)['created_at'] }}{% endif %}</small></span></div>
     <h2>Assessment for review</h2>
     <p>{{ case['ai_summary'] }}</p>
     {% if observations %}<div class="assessment-section reported-section"><h3>Reported observations</h3><ul class="assessment-list">{% for item in observations %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
@@ -110,11 +111,28 @@
       <ol class="audit-list">{% for run in runs %}<li><time>{{ run['created_at'] }}</time><strong>Run {{ run['run_number'] }}</strong><span>{{ run['source'] }}{% if run['model'] %} · {{ run['model'] }}{% endif %}</span><em class="run-changes">{{ run['changes'] }}</em></li>{% endfor %}</ol>
     </details>
     {% endif %}
-    <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}" data-loading-text="Re-running assessment with latest evidence\u2026">
+    <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}" data-loading-text="Re-running assessment with latest evidence…">
       <div class="form-actions"><button class="button secondary" type="submit">Re-run assessment with latest evidence</button></div>
     </form>
   </section>
 </div>
+<section class="panel loop-panel">
+  <p class="eyebrow">CLOSED-LOOP FIELD INTELLIGENCE</p><h2>Case story</h2>
+  {% if case_story['resolved'] %}
+  <p class="notice">This case is marked Resolved. The history below shows the evidence behind the closure.</p>
+  {% elif case_story['needs_visit']['recommended'] %}
+  <div class="notice visit-banner"><strong>Another visit is recommended:</strong><ul>{% for reason in case_story['needs_visit']['reasons'] %}<li>{{ reason }}</li>{% endfor %}</ul></div>
+  {% else %}
+  <p class="muted">No outstanding triggers for another visit.</p>
+  {% endif %}
+  <div class="loop-grid">
+    <div><h3>Originally reported</h3><p>{{ case_story['reported']['text'] }}</p><small>{{ case_story['reported']['observed_at'] }} · {{ case_story['reported']['district'] }}</small></div>
+    <div><h3>Officer-verified</h3>{% if case_story['verified'] %}<p>{{ case_story['verified']['reviewer'] }} · {{ case_story['verified']['decision'] }} · {{ case_story['verified']['created_at'] }}</p><ul class="assessment-list">{% for item in case_story['verified']['observations'] %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}<p class="muted">No officer review yet.</p>{% endif %}</div>
+    <div><h3>Field actions</h3>{% if case_story['actions'] %}<ul class="assessment-list">{% for action in case_story['actions'] %}<li>{{ action['title'] }} — {{ action['status'] }}{% if action['outcome'] %}: {{ action['outcome'] }}{% endif %}</li>{% endfor %}</ul>{% else %}<p class="muted">No field actions assigned.</p>{% endif %}</div>
+    <div><h3>What changed</h3>{% if case_story['changes'] %}<ul class="assessment-list">{% for change in case_story['changes'] %}<li>Run {{ change['run_number'] }}: {{ change['changes'] }}</li>{% endfor %}</ul>{% else %}<p class="muted">No reassessments yet.</p>{% endif %}<p class="muted">{{ case_story['followup_count'] }} follow-up observations recorded.</p></div>
+    <div><h3>Still unresolved</h3>{% if case_story['unresolved']['pending_tasks'] or case_story['unresolved']['missing_information'] or case_story['unresolved']['unresolved_hypotheses'] %}<ul class="assessment-list">{% for item in case_story['unresolved']['pending_tasks'] %}<li>Pending action: {{ item }}</li>{% endfor %}{% for item in case_story['unresolved']['missing_information'] %}<li>Still missing: {{ item }}</li>{% endfor %}{% for item in case_story['unresolved']['unresolved_hypotheses'] %}<li>Unresolved hypothesis: {{ item }}</li>{% endfor %}</ul>{% else %}<p class="muted">Nothing outstanding.</p>{% endif %}</div>
+  </div>
+</section>
 {% if related_clusters %}
 <section class="panel related-panel">
   <p class="eyebrow">SPATIAL CONTEXT</p><h2>Potentially related field reports</h2>
