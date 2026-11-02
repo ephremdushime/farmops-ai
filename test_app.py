@@ -407,8 +407,9 @@ class FarmOpsSmokeTests(unittest.TestCase):
 
         overview = self.client.get("/")
         self.assertIn(b"National Agricultural Intelligence Operations Centre", overview.data)
-        self.assertIn(b"Data Sources", overview.data)
-        self.assertIn(b"PLANNED", overview.data)
+        self.assertNotIn(b"Data Sources", overview.data)
+        self.assertNotIn(b"PLANNED", overview.data)
+        self.assertIn(b"Response Operations", overview.data)
         self.assertIn(b"overview-map", overview.data)
         with self.module.db() as conn:
             case = conn.execute(

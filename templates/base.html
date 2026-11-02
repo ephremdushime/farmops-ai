@@ -29,9 +29,6 @@
       <a class="side-link {% if request.endpoint == 'verification_centre' %}active{% endif %}" href="{{ url_for('verification_centre') }}" {% if request.endpoint == 'verification_centre' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">◉</span><span>Verification Centre</span></a>
       <a class="side-link {% if request.endpoint == 'response_operations' %}active{% endif %}" href="{{ url_for('response_operations') }}" {% if request.endpoint == 'response_operations' %}aria-current="page"{% endif %}><span class="nav-glyph" aria-hidden="true">↗</span><span>Response Operations</span></a>
     </nav>
-    <div class="sidebar-section-label secondary-label">PLATFORM</div>
-    <div class="side-link planned-link" aria-label="Data Sources, planned and not integrated"><span class="nav-glyph" aria-hidden="true">◫</span><span>Data Sources</span><span class="planned-tag">PLANNED</span></div>
-    <div class="side-link planned-link" aria-label="Settings, planned"><span class="nav-glyph" aria-hidden="true">⚙</span><span>Settings</span><span class="planned-tag">PLANNED</span></div>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-system">
       <span class="system-indicator {% if meta_api_configured %}configured{% else %}demo{% endif %}" aria-hidden="true"></span>
