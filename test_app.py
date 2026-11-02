@@ -1823,6 +1823,69 @@ class FarmOpsSmokeTests(unittest.TestCase):
         page = self.client.get("/intelligence/graph").data
         self.assertIn(b"No unresolved reports", page)
 
+    def test_district_brief_renders_grounded_sections(self):
+        first_id = self.create_case()
+        second_id = self.create_case()
+        other_id = self.create_case(district="Far District")
+        today = self.module.datetime.now(self.module.timezone.utc).date()
+        with self.module.db() as conn:
+            conn.execute(
+                "UPDATE cases SET observed_at=? WHERE id=?",
+                ((today - self.module.timedelta(days=20)).isoformat(), other_id),
+            )
+            task_id = conn.execute(
+                "SELECT id FROM tasks WHERE case_id=? AND status='Pending' LIMIT 1",
+                (first_id,),
+            ).fetchone()[0]
+        self.client.post(
+            f"/cases/{first_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="verified"),
+        )
+        done = self.client.post(f"/tasks/{task_id}/toggle", data={"outcome": "Visited field, extent mapped."})
+        self.assertEqual(done.status_code, 302)
+        page = self.client.get(
+            "/district-brief?district=Central%20Demo%20District&period_days=14"
+        ).data
+        self.assertIn(b"Central Demo District", page)
+        self.assertIn(b"vs prior 14 days", page)
+        self.assertIn(b"Maize", page)
+        self.assertIn(b"Visible crop change", page)
+        self.assertIn(b"Spatial signals", page)
+        self.assertIn(b"Officer One", page)
+        self.assertIn(b"Visited field, extent mapped.", page)
+        self.assertIn(b"Awaiting officer review", page)
+        self.assertIn(f"/cases/{first_id}".encode(), page)
+        self.assertIn(f"/cases/{second_id}".encode(), page)
+        self.assertNotIn(f"/cases/{other_id}".encode(), page)
+
+    def test_district_brief_period_delta_and_picker(self):
+        recent_id = self.create_case()
+        today = self.module.datetime.now(self.module.timezone.utc).date()
+        with self.module.db() as conn:
+            conn.execute(
+                "UPDATE cases SET observed_at=? WHERE id=?",
+                ((today - self.module.timedelta(days=20)).isoformat(), recent_id),
+            )
+            stale_id = conn.execute("SELECT MAX(id) FROM cases").fetchone()[0]
+        page = self.client.get(
+            "/district-brief?district=Central%20Demo%20District&period_days=14"
+        ).data
+        self.assertIn(b"No reports in this period.", page)
+        picker = self.client.get("/district-brief").data
+        self.assertIn(b"Select a district", picker)
+        broken = self.client.get("/district-brief?district=X&period_days=abc")
+        self.assertEqual(broken.status_code, 200)
+
+    def test_district_brief_distinguishes_synthetic(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            conn.execute("UPDATE cases SET is_synthetic=1 WHERE id=?", (case_id,))
+        page = self.client.get(
+            "/district-brief?district=Central%20Demo%20District&period_days=14"
+        ).data
+        self.assertIn(b"SYNTHETIC DEMO", page)
+        self.assertIn(b"synthetic demo", page)
+
 
 if __name__ == "__main__":
     unittest.main()

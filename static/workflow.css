@@ -231,6 +231,11 @@ a.stat:hover { border-color: var(--input-focus); }
 .loop-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); margin-top: 10px; }
 .loop-grid h3 { font-size: 12px; margin: 0 0 6px; }
 .visit-banner ul { margin: 6px 0 0; padding-left: 18px; }
+.brief-stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 8px; margin: 10px 0; }
+.brief-stats > div { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.brief-stats strong { font-size: 22px; }
+.brief-stats span { color: var(--muted); font-size: 10px; }
+.brief-cols { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 14px; }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; color: var(--muted); font-size: 10px; }
 .graph-legend .legend-swatch { display: inline-block; width: 22px; height: 0; margin-right: 5px; border-top: 3px solid var(--line); vertical-align: middle; }
 .legend-swatch.edge-rule { border-color: #4a7fc4; }

@@ -324,6 +324,22 @@ label small { color: var(--muted); font-size: 10px; font-weight: 450; line-heigh
   .page-heading .back { position: static; transform: none; margin-bottom: 0; }
   .page-heading:has(.back) { padding-top: 0; }
 }
+@media print {
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --paper: #edf1ef; --panel: #ffffff; --panel-deep: #f1f5f3;
+    --line: #d9e1de; --line-soft: #e6ecea; --ink: #17242f;
+    --muted: #5b6a78; --muted-light: #8b98a6; --link: #1d704e;
+    --tag-green-fg: #15583f; --tag-green-bg: #e4f1e9; --tag-green-border: #bcd9c6;
+    --tag-amber-fg: #7a5320; --tag-amber-bg: #fff3df; --tag-amber-border: #ecd3a8;
+    --tag-red-fg: #96383a; --tag-red-bg: #fdeaea;
+  }
+  .sidebar, .sidebar-scrim, .workspace-bar, .workspace-footer, .flash-stack, form { display: none !important; }
+  .workspace { margin-left: 0; }
+  .main-content { padding: 0; }
+  .panel { break-inside: avoid; box-shadow: none; }
+  a { text-decoration: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }

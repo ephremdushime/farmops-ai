@@ -1640,6 +1640,107 @@ def intelligence_graph():
     return render_template("graph.html", graph=graph, report_count=len(cases))
 
 
+
+
+@app.route("/district-brief")
+def district_brief():
+    district = request.args.get("district", "").strip()
+    try:
+        days = int(request.args.get("period_days", "14"))
+    except (TypeError, ValueError):
+        days = 14
+    if days not in (7, 14, 30):
+        days = 14
+    with db() as conn:
+        districts = [
+            row["district"]
+            for row in conn.execute(
+                "SELECT DISTINCT district FROM cases WHERE district != '' ORDER BY district"
+            ).fetchall()
+        ]
+        if not district:
+            return render_template(
+                "brief.html", districts=districts, selected_district="",
+                period_days=days, brief=None,
+            )
+        today = datetime.now(timezone.utc).date()
+        current_start = (today - timedelta(days=days - 1)).isoformat()
+        prior_start = (today - timedelta(days=2 * days - 1)).isoformat()
+        prior_end = (today - timedelta(days=days)).isoformat()
+        current = conn.execute(
+            "SELECT * FROM cases WHERE district=? AND observed_at>=? ORDER BY observed_at DESC, id DESC",
+            (district, current_start),
+        ).fetchall()
+        prior_reports = conn.execute(
+            "SELECT COUNT(*) FROM cases WHERE district=? AND observed_at>=? AND observed_at<?",
+            (district, prior_start, current_start),
+        ).fetchone()[0]
+        crop_mix = conn.execute(
+            "SELECT crop, COUNT(*) AS n FROM cases WHERE district=? AND observed_at>=? GROUP BY crop ORDER BY n DESC",
+            (district, current_start),
+        ).fetchall()
+        issue_mix = conn.execute(
+            "SELECT issue_type, COUNT(*) AS n FROM cases WHERE district=? AND observed_at>=? GROUP BY issue_type ORDER BY n DESC",
+            (district, current_start),
+        ).fetchall()
+        pending = conn.execute(
+            "SELECT * FROM cases WHERE district=? AND review_status IN ('Pending review', 'Follow Up') ORDER BY observed_at DESC, id DESC",
+            (district,),
+        ).fetchall()
+        confirmed = conn.execute(
+            "SELECT r.reviewer, r.decision, r.created_at, r.reviewed_assessment, c.id AS case_id "
+            "FROM case_reviews AS r JOIN cases AS c ON c.id = r.case_id "
+            "WHERE c.district=? AND r.decision='verified' ORDER BY r.id DESC",
+            (district,),
+        ).fetchall()
+        actions = conn.execute(
+            "SELECT t.title, t.status, t.due_date, c.id AS case_id FROM tasks AS t "
+            "JOIN cases AS c ON c.id = t.case_id "
+            "WHERE c.district=? AND t.status='Pending' ORDER BY t.id",
+            (district,),
+        ).fetchall()
+        outcomes = conn.execute(
+            "SELECT t.title, t.outcome, c.id AS case_id FROM tasks AS t "
+            "JOIN cases AS c ON c.id = t.case_id "
+            "WHERE c.district=? AND t.status='Completed' AND t.outcome != '' ORDER BY t.id DESC",
+            (district,),
+        ).fetchall()
+    clusters = [
+        cluster for cluster in build_risk_clusters(_unresolved_cases())
+        if any(report["district"] == district for report in cluster["reports"])
+    ]
+    confirmed_findings = []
+    for row in confirmed:
+        try:
+            summary = (json.loads(row["reviewed_assessment"]) or {}).get("summary", "")
+        except (ValueError, TypeError):
+            summary = ""
+        confirmed_findings.append({
+            "case_id": row["case_id"],
+            "reviewer": row["reviewer"],
+            "created_at": row["created_at"],
+            "summary": summary,
+        })
+    brief = {
+        "district": district,
+        "current": [dict(row) for row in current],
+        "prior_count": prior_reports,
+        "delta": len(current) - prior_reports,
+        "crop_mix": [(row["crop"], row["n"]) for row in crop_mix],
+        "issue_mix": [(row["issue_type"], row["n"]) for row in issue_mix],
+        "pending": [dict(row) for row in pending],
+        "confirmed": confirmed_findings,
+        "actions": [dict(row) for row in actions],
+        "outcomes": [dict(row) for row in outcomes],
+        "clusters": clusters,
+        "synthetic": sum(1 for row in current if row["is_synthetic"]),
+    }
+    return render_template(
+        "brief.html", districts=districts, selected_district=district,
+        period_days=days, brief=brief,
+    )
+
+
 @app.route("/risk-map")
 def risk_map():
     cases = _unresolved_cases()

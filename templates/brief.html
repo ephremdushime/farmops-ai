@@ -1,0 +1,40 @@
+﻿{% extends "base.html" %}
+{% block title %}District Brief · FarmOps AI{% endblock %}
+{% block page_context %}District Brief{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">INSTITUTIONAL REPORTING · EVIDENCE-GROUNDED</p><h1>District brief</h1><p class="lead">A situation brief for one district and reporting period. Every finding links to its source records; synthetic demo data is labelled wherever it appears.</p></div></div>
+<section class="panel filter-panel">
+  <form class="filter-form brief-form" method="get">
+    <label>District<select name="district" required><option value="">Select district</option>{% for option in districts %}<option value="{{ option }}" {% if option==selected_district %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    <label>Period<select name="period_days">{% for window in [7, 14, 30] %}<option value="{{ window }}" {% if window==period_days %}selected{% endif %}>Last {{ window }} days</option>{% endfor %}</select></label>
+    <button class="button secondary" type="submit">Generate brief</button>
+  </form>
+</section>
+{% if brief %}
+<section class="panel"><p class="eyebrow">REPORTING ACTIVITY · LAST {{ period_days }} DAYS</p><h2>{{ brief['district'] }}</h2>
+  <div class="brief-stats"><div><strong>{{ brief['current']|length }}</strong><span>reports</span></div><div><strong>{% if brief['delta'] > 0 %}+{% endif %}{{ brief['delta'] }}</strong><span>vs prior {{ period_days }} days</span></div><div><strong>{{ brief['synthetic'] }}</strong><span>synthetic demo</span></div><div><strong>{{ brief['current']|length - brief['synthetic'] }}</strong><span>field reports</span></div></div>
+  <ul class="insight-list">{% for report in brief['current'] %}<li><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['crop'] }} · {{ report['observed_at'] }}</a><span>{{ report['review_status'] }}{% if report['is_synthetic'] %} · SYNTHETIC DEMO{% endif %}</span></li>{% else %}<li><span>No reports in this period.</span></li>{% endfor %}</ul>
+</section>
+<section class="panel"><p class="eyebrow">CROP AND ISSUE MIX</p><h2>What was reported</h2>
+  <div class="brief-cols"><div><h3>Crops</h3><ul class="assessment-list">{% for crop, count in brief['crop_mix'] %}<li>{{ crop }} — {{ count }}</li>{% else %}<li>No reports in this period.</li>{% endfor %}</ul></div>
+  <div><h3>Issues</h3><ul class="assessment-list">{% for issue, count in brief['issue_mix'] %}<li>{{ issue }} — {{ count }}</li>{% else %}<li>No reports in this period.</li>{% endfor %}</ul></div></div>
+</section>
+<section class="panel"><p class="eyebrow">CANDIDATE CLUSTERS TOUCHING THIS DISTRICT</p><h2>Spatial signals</h2>
+  {% for cluster in brief['clusters'] %}<p><strong>{{ cluster['crop'] }} · {{ cluster['count'] }} reports · {{ cluster['signal_label'] }}</strong> — {{ cluster['explanation'] }}</p><p>{% for report in cluster['reports'] %}<a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% else %}<p class="muted">No candidate clusters touch this district.</p>{% endfor %}
+</section>
+<section class="panel"><p class="eyebrow">PENDING VERIFICATION</p><h2>Awaiting officer review</h2>
+  <ul class="insight-list">{% for report in brief['pending'] %}<li><a href="{{ url_for('case_detail', case_id=report['id']) }}">Case #{{ report['id'] }} · {{ report['crop'] }} · {{ report['observed_at'] }}</a><span>{{ report['review_status'] }}</span></li>{% else %}<li><span>Nothing awaiting review.</span></li>{% endfor %}</ul>
+</section>
+<section class="panel"><p class="eyebrow">OFFICER-CONFIRMED FINDINGS</p><h2>Verified in this district</h2>
+  <ul class="insight-list">{% for finding in brief['confirmed'] %}<li><a href="{{ url_for('case_detail', case_id=finding['case_id']) }}">Case #{{ finding['case_id'] }}</a><span>{{ finding['reviewer'] }} · {{ finding['created_at'] }} — {{ finding['summary']|truncate(120) }}</span></li>{% else %}<li><span>No verified findings yet.</span></li>{% endfor %}</ul>
+</section>
+<section class="panel"><p class="eyebrow">FIELD ACTIONS</p><h2>Outstanding and recorded</h2>
+  <h3>Pending ({{ brief['actions']|length }})</h3>
+  <ul class="insight-list">{% for action in brief['actions'] %}<li><a href="{{ url_for('case_detail', case_id=action['case_id']) }}">Case #{{ action['case_id'] }}</a><span>{{ action['title'] }}{% if action['due_date'] %} · due {{ action['due_date'] }}{% endif %}</span></li>{% else %}<li><span>No pending actions.</span></li>{% endfor %}</ul>
+  <h3>Recorded outcomes</h3>
+  <ul class="insight-list">{% for outcome in brief['outcomes'] %}<li><a href="{{ url_for('case_detail', case_id=outcome['case_id']) }}">Case #{{ outcome['case_id'] }}</a><span>{{ outcome['title'] }} — {{ outcome['outcome'] }}</span></li>{% else %}<li><span>No recorded outcomes yet.</span></li>{% endfor %}</ul>
+</section>
+{% else %}
+<div class="empty"><h3>Select a district</h3><p>Choose a district and reporting period to generate the brief.</p></div>
+{% endif %}
+{% endblock %}

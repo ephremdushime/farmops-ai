@@ -4,7 +4,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">FIELD INTAKE · ORIGINAL EVIDENCE</p><h1>Field reports</h1><p class="lead">Browse observations as submitted. Model interpretation and officer verification remain separately attributed.</p></div>
-  <a class="button primary" href="{{ url_for('new_case') }}">＋ New observation</a>
+  <a class="button secondary" href="{{ url_for('district_brief') }}">District brief</a><a class="button primary" href="{{ url_for('new_case') }}">＋ New observation</a>
 </section>
 <div class="report-summary">
   <div><strong>{{ reports|length }}</strong><span>matching reports</span></div>
