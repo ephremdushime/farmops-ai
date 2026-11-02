@@ -172,6 +172,7 @@
       <legend>Review each AI hypothesis</legend>
       {% for hypothesis in review_assessment['hypotheses'] %}
       <div class="hypothesis-row">
+        <p class="muted">Original AI hypothesis: {{ hypothesis }}</p>
         <label>Officer's assessment<input name="hypothesis_text_{{ loop.index0 }}" required maxlength="500" value="{{ hypothesis }}"></label>
         <label>Disposition
           <select name="hypothesis_decision_{{ loop.index0 }}" required>
@@ -196,7 +197,7 @@
     <article class="review-entry">
       <div class="review-entry-head"><strong>{{ review['reviewer'] }}</strong><span class="pill">{{ review['decision']|replace('_',' ')|title }}</span><time>{{ review['created_at'] }}</time></div>
       <p>{{ review['reviewed_assessment'].get('summary', '') }}</p>
-      <p><strong>Reviewed urgency:</strong> {{ review['reviewed_assessment'].get('urgency', '') }}</p>
+      <p><strong>Reviewed urgency:</strong> {{ review['reviewed_assessment'].get('urgency', '') }}{% if review['original_assessment'].get('urgency') and review['original_assessment'].get('urgency') != review['reviewed_assessment'].get('urgency') %} <span class="muted">(was {{ review['original_assessment'].get('urgency') }})</span>{% endif %}</p>
       {% if review['reviewed_assessment'].get('observations') %}<p><strong>Verified observations</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['observations'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
       {% if review['reviewed_assessment'].get('missing_information') %}<p><strong>Information still needed</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['missing_information'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
       {% if review['reviewed_assessment'].get('steps') %}<p><strong>Corrected actions</strong></p><ul class="assessment-list">{% for item in review['reviewed_assessment']['steps'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
@@ -207,9 +208,11 @@
         <summary>Compare with original AI assessment</summary>
         <p><strong>Original:</strong> {{ review['original_assessment'].get('summary', '') }}</p>
         <p><strong>Officer-reviewed:</strong> {{ review['reviewed_assessment'].get('summary', '') }}</p>
+        {% if review['original_assessment'].get('observations') %}<p><strong>AI-reported observations</strong> <span class="muted">(unverified at the time)</span></p><ul class="assessment-list">{% for item in review['original_assessment']['observations'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+        {% if review['original_assessment'].get('hypotheses') %}<p><strong>AI hypotheses (tentative at the time)</strong></p><ul class="assessment-list">{% for item in review['original_assessment']['hypotheses'] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
       </details>
       {% if review['reviewed_assessment'].get('hypotheses') %}
-      <ul class="assessment-list">{% for hypothesis in review['reviewed_assessment']['hypotheses'] %}<li><strong>{{ hypothesis['disposition']|title }}:</strong> {{ hypothesis['assessment'] }}</li>{% endfor %}</ul>
+      <ul class="assessment-list">{% for hypothesis in review['reviewed_assessment']['hypotheses'] %}<li><strong>{{ hypothesis['disposition']|title }}:</strong> {{ hypothesis['assessment'] }}<br><small class="muted">Original AI hypothesis: {{ hypothesis['original'] }}</small></li>{% endfor %}</ul>
       {% endif %}
     </article>
     {% endfor %}

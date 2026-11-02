@@ -1429,6 +1429,83 @@ class FarmOpsSmokeTests(unittest.TestCase):
             self.assertIn(today.isoformat(), reason)
         self.assertIn(b"km from the furthest member", self.client.get("/intelligence").data)
 
+    def _review_payload(self, **overrides):
+        payload = {
+            "reviewer": "Officer One",
+            "decision": "follow_up",
+            "reviewed_summary": "Observed yellowing; cause remains undetermined.",
+            "reviewed_observations": "Yellowing leaves confirmed.\nAfter heavy rain.",
+            "reviewed_urgency": "Routine",
+            "reviewed_missing_information": "Affected area is still unknown.",
+            "reviewed_steps": "Visit field.\nTake follow-up photos.",
+            "reviewed_follow_up_questions": "When did symptoms begin?",
+            "reviewed_uncertainty": "Cause remains undetermined pending inspection.",
+            "hypothesis_decision_0": "rejected",
+            "hypothesis_text_0": "Waterlogging ruled out by drainage check.",
+            "notes": "Check soil moisture during field visit.",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_review_audit_compares_original_and_verified(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            conn.execute(
+                "UPDATE cases SET urgency='Soon', observations=?, hypotheses=? WHERE id=?",
+                (json.dumps(["AI saw yellowing."]), json.dumps(["Waterlogging is a possibility."]), case_id),
+            )
+        response = self.client.post(f"/cases/{case_id}/review", data=self._review_payload())
+        self.assertEqual(response.status_code, 302)
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"AI-reported observations", detail)
+        self.assertIn(b"AI saw yellowing.", detail)
+        self.assertIn(b"Yellowing leaves confirmed.", detail)
+        self.assertIn(b"AI hypotheses (tentative at the time)", detail)
+        self.assertIn(b"Waterlogging is a possibility.", detail)
+        self.assertIn(b"Waterlogging ruled out by drainage check.", detail)
+        self.assertIn(b"Rejected:", detail)
+        self.assertIn(b"(was Soon)", detail)
+        self.assertIn(b"Original AI hypothesis: Waterlogging is a possibility.", detail)
+
+    def test_reviews_are_append_only_with_decisions(self):
+        case_id = self.create_case()
+        first = self.client.post(
+            f"/cases/{case_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="follow_up"),
+        )
+        second = self.client.post(
+            f"/cases/{case_id}/review",
+            data=self._review_payload(
+                reviewer="Officer Two", decision="verified",
+                reviewed_summary="Second review confirms the report.",
+            ),
+        )
+        self.assertEqual(first.status_code, 302)
+        self.assertEqual(second.status_code, 302)
+        with self.module.db() as conn:
+            rows = conn.execute(
+                "SELECT reviewer, decision, created_at FROM case_reviews WHERE case_id=? ORDER BY id",
+                (case_id,),
+            ).fetchall()
+            status = conn.execute(
+                "SELECT review_status FROM cases WHERE id=?", (case_id,)
+            ).fetchone()[0]
+            events = conn.execute(
+                "SELECT actor, details FROM case_events WHERE case_id=? AND event_type='officer_review' ORDER BY id",
+                (case_id,),
+            ).fetchall()
+        self.assertEqual([(row["reviewer"], row["decision"]) for row in rows],
+                         [("Officer One", "follow_up"), ("Officer Two", "verified")])
+        self.assertTrue(all(row["created_at"] for row in rows))
+        self.assertEqual(status, "Verified")
+        self.assertEqual(
+            [(event["actor"], json.loads(event["details"])["decision"]) for event in events],
+            [("Officer One", "follow_up"), ("Officer Two", "verified")],
+        )
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"Officer One", detail)
+        self.assertIn(b"Officer Two", detail)
+
 
 if __name__ == "__main__":
     unittest.main()
