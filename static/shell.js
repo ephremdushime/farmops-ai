@@ -43,3 +43,18 @@
     });
   }
 })();
+(() => {
+  document.querySelectorAll("form[data-loading-text]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      if (form.dataset.submitted === "true") return;
+      form.dataset.submitted = "true";
+      form.setAttribute("aria-busy", "true");
+      form.querySelectorAll("button[type=submit]").forEach((button) => {
+        if (!button.dataset.originalText) button.dataset.originalText = button.textContent;
+        button.textContent = form.dataset.loadingText;
+        button.disabled = true;
+      });
+    });
+  });
+})();
+

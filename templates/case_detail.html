@@ -93,7 +93,7 @@
   </section>
   <section class="panel plan-panel">
     <p class="eyebrow">MODEL-ASSISTED ASSESSMENT · UNVERIFIED</p>
-    <div class="assessment-provenance"><span class="source-indicator {% if case['assessment_source']=='Meta Model API' %}source-meta{% elif case['is_synthetic'] %}source-synthetic{% else %}source-demo{% endif %}" aria-hidden="true"></span><span><strong>{{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN · LEGACY REPORT') }}</strong><small>{% if case['assessment_model'] %}Model {{ case['assessment_model'] }}{% elif case['assessment_source']=='DEMO MODE — no Meta API key configured' %}No model request was made{% elif case['assessment_source']=='Fallback mode — Meta API request failed' %}Model request failed; fallback shown{% else %}Human verification required{% endif %}</small></span></div>
+    <div class="assessment-provenance"><span class="source-indicator {% if case['assessment_source']=='Meta Model API' %}source-meta{% elif case['is_synthetic'] %}source-synthetic{% else %}source-demo{% endif %}" aria-hidden="true"></span><span><strong>{{ case['assessment_source'] or ('SYNTHETIC DEMO' if case['is_synthetic'] else 'UNKNOWN · LEGACY REPORT') }}</strong><small>{% if case['assessment_model'] %}Model {{ case['assessment_model'] }}{% elif case['assessment_source']=='DEMO MODE — no Meta API key configured' %}No model request was made{% elif case['assessment_source']=='Fallback mode — Meta API request failed' %}Model request failed; fallback shown{% else %}Human verification required{% endif %}{% if runs %} \u00b7 assessed {{ (runs|last)['created_at'] }}{% endif %}</small></span></div>
     <h2>Assessment for review</h2>
     <p>{{ case['ai_summary'] }}</p>
     {% if observations %}<div class="assessment-section reported-section"><h3>Reported observations</h3><ul class="assessment-list">{% for item in observations %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
@@ -109,7 +109,7 @@
       <ol class="audit-list">{% for run in runs %}<li><time>{{ run['created_at'] }}</time><strong>Run {{ run['run_number'] }}</strong><span>{{ run['source'] }}{% if run['model'] %} · {{ run['model'] }}{% endif %}</span><em class="run-changes">{{ run['changes'] }}</em></li>{% endfor %}</ol>
     </details>
     {% endif %}
-    <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}">
+    <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}" data-loading-text="Re-running assessment with latest evidence\u2026">
       <div class="form-actions"><button class="button secondary" type="submit">Re-run assessment with latest evidence</button></div>
     </form>
   </section>

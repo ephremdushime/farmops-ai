@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-heading"><div><a class="back" href="{{ url_for('field_reports') }}">← Field reports</a><p class="eyebrow">FIELD OBSERVATION · EVIDENCE INTAKE</p><h1>Report field evidence</h1><p class="lead">Capture the observation and its context. Record what was seen separately from assumptions; coordinates are optional and should never be estimated. Optional evidence sections raise the completeness score and sharpen the AI assessment.</p></div></div>
 <div class="intake-meter" role="status" aria-label="Evidence completeness meter"><div class="intake-meter-head"><strong>Evidence completeness</strong><span id="intake-meter-label">0 of 15 evidence fields</span></div><div class="intake-meter-track"><span id="intake-meter-fill"></span></div></div>
-<form class="form-card" method="post" enctype="multipart/form-data">
+<form class="form-card" method="post" enctype="multipart/form-data" data-loading-text="Creating case and requesting assessment\u2026">
   <div class="form-grid">
     <fieldset class="form-section full"><legend>Observation (required)</legend>
       <div class="form-grid">

@@ -1506,6 +1506,43 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"Officer One", detail)
         self.assertIn(b"Officer Two", detail)
 
+    def test_review_status_filter_and_clear(self):
+        pending_id = self.create_case()
+        verified_id = self.create_case()
+        response = self.client.post(
+            f"/cases/{verified_id}/review",
+            data=self._review_payload(reviewer="Officer Two", decision="verified"),
+        )
+        self.assertEqual(response.status_code, 302)
+        filtered = self.client.get("/field-reports?status=Verified").data
+        self.assertIn(f"/cases/{verified_id}".encode(), filtered)
+        self.assertNotIn(f"/cases/{pending_id}".encode(), filtered)
+        self.assertIn(b"Clear filters", filtered)
+        self.assertIn(b"All statuses", filtered)
+        unfiltered = self.client.get("/field-reports").data
+        self.assertIn(f"/cases/{pending_id}".encode(), unfiltered)
+        self.assertIn(f"/cases/{verified_id}".encode(), unfiltered)
+        self.assertNotIn(b"Clear filters", unfiltered)
+
+    def test_ai_loading_states_present(self):
+        intake = self.client.get("/cases/new").data
+        self.assertIn(b"data-loading-text=", intake)
+        self.assertIn(b"requesting assessment", intake)
+        case_id = self.create_case()
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"Re-running assessment with latest evidence", detail)
+
+    def test_provenance_shows_assessed_time(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            created_at = conn.execute(
+                "SELECT created_at FROM assessment_runs WHERE case_id=? ORDER BY run_number DESC",
+                (case_id,),
+            ).fetchone()[0]
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b"assessed ", detail)
+        self.assertIn(created_at.encode(), detail)
+
 
 if __name__ == "__main__":
     unittest.main()

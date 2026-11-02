@@ -16,7 +16,9 @@
   <form class="filter-form" method="get">
     <label>District<select name="district"><option value="">All districts</option>{% for district in districts %}<option value="{{ district }}" {% if district==selected_district %}selected{% endif %}>{{ district }}</option>{% endfor %}</select></label>
     <label>Crop<select name="crop"><option value="">All crops</option>{% for crop in crops %}<option value="{{ crop }}" {% if crop==selected_crop %}selected{% endif %}>{{ crop }}</option>{% endfor %}</select></label>
+    <label>Review status<select name="status"><option value="">All statuses</option>{% for review_status in statuses %}<option value="{{ review_status }}" {% if review_status==selected_status %}selected{% endif %}>{{ review_status }}</option>{% endfor %}</select></label>
     <button class="button secondary" type="submit">Filter reports</button>
+    {% if selected_district or selected_crop or selected_status %}<a class="button secondary" href="{{ url_for('field_reports') }}">Clear filters</a>{% endif %}
   </form>
 </section>
 {% if reports %}

@@ -1330,6 +1330,7 @@ def index():
 def field_reports():
     district = request.args.get("district", "").strip()
     crop = request.args.get("crop", "").strip()
+    status = request.args.get("status", "").strip()
     query = "SELECT * FROM cases WHERE 1=1"
     parameters = []
     if district:
@@ -1338,6 +1339,9 @@ def field_reports():
     if crop:
         query += " AND crop = ?"
         parameters.append(crop)
+    if status:
+        query += " AND review_status = ?"
+        parameters.append(status)
     query += " ORDER BY observed_at DESC, id DESC"
     with db() as conn:
         reports = conn.execute(query, parameters).fetchall()
@@ -1351,6 +1355,10 @@ def field_reports():
             row["crop"]
             for row in conn.execute("SELECT DISTINCT crop FROM cases ORDER BY crop").fetchall()
         ]
+        statuses = [
+            row["review_status"]
+            for row in conn.execute("SELECT DISTINCT review_status FROM cases ORDER BY review_status").fetchall()
+        ]
     return render_template(
         "field_reports.html",
         reports=_reports_with_quality(reports),
@@ -1358,6 +1366,8 @@ def field_reports():
         crops=crops,
         selected_district=district,
         selected_crop=crop,
+        statuses=statuses,
+        selected_status=status,
     )
 
 
