@@ -1886,6 +1886,29 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertIn(b"SYNTHETIC DEMO", page)
         self.assertIn(b"synthetic demo", page)
 
+    def test_rejected_report_leaves_candidate_clusters(self):
+        today, clusters = self._cluster_pair()
+        self.assertEqual(len(clusters), 1)
+        with self.module.db() as conn:
+            first_id = conn.execute("SELECT MIN(id) FROM cases").fetchone()[0]
+        self.client.post(
+            f"/cases/{first_id}/review",
+            data=self._review_payload(reviewer="Officer One", decision="rejected"),
+        )
+        with self.module.db() as conn:
+            cases = conn.execute("SELECT * FROM cases ORDER BY id").fetchall()
+        self.assertEqual(self.module.build_risk_clusters(cases), [])
+        page = self.client.get("/intelligence/graph").data
+        self.assertIn(b"edge-human-no", page)
+        self.assertNotIn(b"<path class=\"edge-rule\"", page)
+
+    def test_graph_marks_synthetic_reports(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            conn.execute("UPDATE cases SET is_synthetic=1 WHERE id=?", (case_id,))
+        page = self.client.get("/intelligence/graph").data
+        self.assertIn(b"SYNTHETIC", page)
+
 
 if __name__ == "__main__":
     unittest.main()

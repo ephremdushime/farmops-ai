@@ -42,7 +42,7 @@ Record at 1080p, light theme, browser 100% zoom. Narration ~430 words ≈ 2:45 a
 | 3 | 0:55 | submit → `/cases/<id>` | Click "Create case and plan". Hold on the loading button briefly. Scroll the assessment: provenance badge, observations, tentative hypotheses, uncertainty box. Play the voice note. |
 | 4 | 1:25 | same page | "Record evidence": add a note. Click "Re-run assessment with latest evidence". Open Assessment history, point at the change line for run 2. |
 | 5 | 1:55 | `#officer-review` | Scroll the form (prefilled corrections, hypothesis dispositions). Submit a "Verified" review as a demo officer. Show the audit entry + compare block. |
-| 6 | 2:20 | `/risk-map`, `/intelligence` | Pan the map, open a marker popup. Switch to Intelligence: one cluster card, its metrics, one inclusion reason. End on overview. |
+| 6 | 2:20 | `/risk-map`, `/intelligence` | Pan the map, open a marker popup. Switch to Intelligence: one cluster card, its metrics, one inclusion reason. If ahead of pace, flash the relationship graph (`/intelligence/graph`) and district brief (`/district-brief`) for 10 s each. End on overview. |
 
 ## Recording notes
 

@@ -23,6 +23,10 @@ Agricultural extension workers often need to gather incomplete reports, decide w
 - Response validation with a clearly labelled workflow fallback if the API is unavailable or returns invalid data.
 - Optional JPEG, PNG, and WebP photo evidence, passed to Muse Spark when configured and stored outside the public static directory.
 - Optional field voice notes (WAV up to 10 MB needs no extra tools; MP3/M4A/OGG/WebM/MP4 need ffmpeg on the server), transcribed by Muse Voice Transcribe and analysed alongside the written description.
+- Evidence consistency notes: the assessment records how report text, voice transcript, and photographs relate (agreements, conflicts, single-source limits, missing evidence), rendered from the latest assessment run.
+- Closed-loop case story: originally reported, officer-verified, field actions, what changed, and still unresolved in one panel with visit recommendations; resolving a case requires an officer review.
+- Relationship graph: server-rendered link chart of reports, candidate clusters, officer decisions, and open evidence requests, with every edge explained and a text equivalent.
+- District intelligence brief: read-only per-district situation brief (activity deltas, crop/issue mix, clusters, verification queue, confirmed findings, actions, outcomes) with source links and a print stylesheet.
 - Officer review that records corrected observations, urgency, hypotheses, information needs, actions, and a decision in an append-only case audit trail.
 - Officer-confirmed observations and location/crop/issue summaries for unresolved cases.
 - Field action assignment with due dates and required completion outcomes.

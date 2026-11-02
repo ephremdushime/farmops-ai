@@ -93,3 +93,11 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - Phase 5: AI forms show loading states and block double-posts; provenance shows assessment time; field reports gain a review-status filter and clear link.
 - Phase 6: session cookies hardened (HttpOnly, SameSite=Lax); verified no secrets in tracked files or history, no key material in logs/responses, prototype labelling on every page; CSRF tokens documented as deployment-required.
 - Validation: `python -m unittest` -- 58 tests passed; `node --check` clean on all app scripts.
+
+## Advanced intelligence sprint (Nov 2-3)
+- Feature 1: model returns consistency_notes under the strict schema (live-verified; first attempt misplaced the property and was caught by a live 400 probe); rendered from the latest run; photo-diagnosis restraint in the prompt.
+- Feature 2: case-story loop panel with visit reasons; resolve requires an officer review; closure/reopen audited; fixed literal unicode escapes showing in loading text with a regression test.
+- Feature 3: /intelligence/graph link chart (reports, clusters, reviews, evidence requests) with explained rule/AI/human edges, text equivalent, and synthetic tagging.
+- Feature 4: /district-brief read-only brief with period deltas, mix, clusters, queues, findings, actions, outcomes; print stylesheet; server-side PDF deliberately skipped.
+- A/B/C: synthetic/unverified/verified labelling audited on new surfaces; rejecting a report removes it from clusters (locked by test); no new secrets surface.
+- Validation: `python -m unittest` -- 78 tests passed; `node --check` clean on all app scripts.

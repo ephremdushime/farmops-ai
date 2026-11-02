@@ -628,7 +628,7 @@ def build_relationship_graph(cases, clusters, reviews_by_case, evidence_tasks):
             "id": f"r{report['id']}", "kind": "report",
             "x": 10, "y": y, "w": 180, "h": 36,
             "label": short(f"Case #{report['id']} \u00b7 {report['crop']}", 26),
-            "sub": short(f"{report['district']} \u00b7 {report['observed_at']}", 30),
+            "sub": short(("SYNTHETIC \u00b7 " if report["is_synthetic"] else "") + f"{report['district']} \u00b7 {report['observed_at']}", 34),
             "url": f"/cases/{report['id']}",
         })
     for pos, cluster in enumerate(clusters):
