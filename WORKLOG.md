@@ -127,3 +127,22 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - FARMOPS_ENV_FILE override added for hermetic boot tests; .env.example and README document modes and secret setup.
 - Tests: mode/debug mapping, Secure-follows-production, redirect + HSTS behavior, two subprocess boot tests.
 - Validation: `python -m unittest discover -v` — 101 tests passed (95 existing + 6 new). One full-suite run hit an environmental Subprocess timeout under heavy machine load (869s run); clean re-run green in 170s.
+
+
+## 2026-11-25 — P0-5 SQLite durability and ref integrity
+- db(): 30s busy timeout; init_db() enables WAL + synchronous NORMAL, creates 10 query indexes.
+- observation_ref: UNIQUE index with legacy '' backfill; intake mints via pre-checked retry helper; residual TOCTOU race degrades to clean 400 re-render instead of 500.
+- Backup/restore/export: online SQLite backup-API copy plus uploads snapshot; restore requires --force, validates first, re-enables WAL, migrates forward; JSON export excludes password hashes and blobs.
+- init_db()/db() accept an optional path (default behavior unchanged); init_db creates parent dirs.
+- Legacy migration expectation updated: empty refs are backfilled to OBS- refs (required by UNIQUE).
+- Validation: `python -m unittest discover -v` — 114 tests passed (105 existing + 9 new: pragmas/indexes, concurrency smoke, ref retry/exhaustion/backstop/collision-400, backup round-trip, guardrails, export).
+
+
+## 2026-11-25 — P0-6 upload abuse and retention
+- Quotas: cumulative 4 photos/case, 64 MB/case, 2 GB total; enforced on intake and follow-ups (existing 400/redirect handlers).
+- Video-as-voice decided: .mp4/.webm rejected in the voice slot with guidance; .m4a kept (audio-only); dedicated video evidence deferred.
+- Intake photos now PIL-verified (readable image, 12000px dimension cap, decompression-bomb guard).
+- Orphan purge with 60-minute grace (never deletes fresh/concurrent files); runs on --migrate and via --purge-uploads [--dry-run].
+- Retention policy documented: referenced evidence kept indefinitely; orphans purged as above.
+- Fixed two photo tests to use real PNG fixtures (fake magic-only bytes now correctly rejected).
+- Validation: `python -m unittest discover -v` — 122 tests passed (114 existing + 8 new).

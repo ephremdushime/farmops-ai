@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import wave
 from contextlib import closing
@@ -58,6 +59,27 @@ class FarmOpsSmokeTests(unittest.TestCase):
             for path in self.module.UPLOAD_DIR.iterdir():
                 if path.is_file():
                     path.unlink()
+
+    def _png_bytes(self, width=4, height=4):
+        image = Image.new("RGB", (width, height), color=(40, 120, 60))
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def _intake_fields(self, **overrides):
+        fields = {
+            "farm_name": "Demo Farm",
+            "reporter_name": "Field Officer",
+            "location": "Demo District",
+            "crop": "Maize",
+            "issue_type": "Visible crop change",
+            "description": "Yellowing leaves reported after heavy rain.",
+            "district": "Central Demo District",
+            "observed_at": self.module.datetime.now(
+                self.module.timezone.utc).date().isoformat(),
+        }
+        fields.update(overrides)
+        return fields
 
     def login(self, username, password, client=None):
         client = client if client is not None else self.client
@@ -899,7 +921,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertEqual(row["standing_water"], "Yes")
 
     def test_labeled_photo_slots_store_shot_types(self):
-        image_bytes = b"\x89PNG\r\n\x1a\nfake-image-data"
+        image_bytes = self._png_bytes()
         with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
             response = self.client.post(
                 "/cases/new",
@@ -925,7 +947,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
         self.assertEqual(shots, ["overview", "detail"])
 
     def test_photo_cap_is_four(self):
-        image_bytes = b"\x89PNG\r\n\x1a\nfake-image-data"
+        image_bytes = self._png_bytes()
         files = [("photos", (BytesIO(image_bytes), "leaf%d.png" % i, "image/png"))
                  for i in range(5)]
         data = {
@@ -1123,7 +1145,7 @@ class FarmOpsSmokeTests(unittest.TestCase):
                 self.assertEqual(row["description"], "Old report")
                 self.assertEqual(json.loads(row["observations"]), [])
                 self.assertEqual(json.loads(row["follow_up_questions"]), [])
-                self.assertEqual(row["observation_ref"], "")
+                self.assertRegex(row["observation_ref"], r"^OBS-[A-F0-9]{12}$")
                 self.assertEqual(row["assessment_source"], "")
                 self.assertEqual(row["assessment_model"], "")
                 self.assertEqual(row["growth_stage"], "")
@@ -2327,6 +2349,336 @@ class FarmOpsSmokeTests(unittest.TestCase):
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({"cases", "tasks", "users"} <= tables)
+
+    def test_database_wal_timeout_and_indexes(self):
+        with self.module.db() as conn:
+            journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            busy = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            indexes = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'")}
+            unique_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name='idx_cases_observation_ref'"
+            ).fetchone()[0]
+        self.assertEqual(journal.lower(), "wal")
+        self.assertEqual(busy, 30000)
+        for name in ("idx_cases_district", "idx_cases_status", "idx_cases_review_status",
+                     "idx_cases_observed_at", "idx_tasks_case_id", "idx_case_reviews_case_id",
+                     "idx_case_events_case_id", "idx_case_evidence_case_id",
+                     "idx_case_notes_case_id", "idx_assessment_runs_case_id",
+                     "idx_cases_observation_ref"):
+            self.assertIn(name, indexes)
+        self.assertIn("UNIQUE", unique_sql)
+
+    def test_concurrent_writes_do_not_lock(self):
+        case_id = self.create_case()
+        barrier = threading.Barrier(4)
+        errors = []
+
+        def worker(n):
+            try:
+                barrier.wait(timeout=30)
+                for i in range(25):
+                    with self.module.db() as conn:
+                        conn.execute(
+                            "INSERT INTO tasks (case_id, title, created_at) VALUES (?, ?, ?)",
+                            (case_id, "load-%d-%d" % (n, i), self.module.utc_timestamp()))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+        self.assertEqual(errors, [])
+        with self.module.db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE title LIKE 'load-%'").fetchone()[0]
+        self.assertEqual(count, 100)
+
+    def test_unique_ref_helper_retries_and_exhausts(self):
+        taken = "OBS-AAAAAAAAAAAA"
+        with self.module.db() as conn:
+            conn.execute(
+                "INSERT INTO cases (farm_name, reporter_name, location, crop, issue_type,"
+                " description, observation_ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ("Ref Farm", "Ref Officer", "Ref Sector", "Maize", "Visible crop change",
+                 "Ref check.", taken, self.module.utc_timestamp()))
+            with patch.object(self.module, "_new_observation_ref",
+                              side_effect=[taken, "OBS-BBBBBBBBBBBB"]):
+                self.assertEqual(self.module._unique_observation_ref(conn), "OBS-BBBBBBBBBBBB")
+            with patch.object(self.module, "_new_observation_ref", side_effect=[taken] * 10):
+                with self.assertRaises(ValueError):
+                    self.module._unique_observation_ref(conn)
+
+    def test_duplicate_ref_is_retried_not_duplicated(self):
+        first_id = self.create_case()
+        with self.module.db() as conn:
+            taken = conn.execute(
+                "SELECT observation_ref FROM cases WHERE id=?", (first_id,)).fetchone()[0]
+        fresh = "OBS-BBBBBBBBBBBC" if taken != "OBS-BBBBBBBBBBBC" else "OBS-BBBBBBBBBBBD"
+        with patch.object(self.module, "_new_observation_ref",
+                          side_effect=[taken, taken, fresh]):
+            self.create_case()
+        with self.module.db() as conn:
+            refs = [row[0] for row in conn.execute("SELECT observation_ref FROM cases ORDER BY id")]
+        self.assertEqual(refs, [taken, fresh])
+
+    def test_unique_ref_backstop_rejects_duplicates(self):
+        first_id = self.create_case()
+        second_id = self.create_case()
+        with self.module.db() as conn:
+            taken = conn.execute(
+                "SELECT observation_ref FROM cases WHERE id=?", (first_id,)).fetchone()[0]
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("UPDATE cases SET observation_ref=? WHERE id=?", (taken, second_id))
+
+    def test_intake_ref_collision_rerenders_cleanly(self):
+        first_id = self.create_case()
+        with self.module.db() as conn:
+            taken = conn.execute(
+                "SELECT observation_ref FROM cases WHERE id=?", (first_id,)).fetchone()[0]
+        fields = {
+            "farm_name": "Demo Farm", "reporter_name": "Field Officer",
+            "location": "Demo District", "crop": "Maize", "issue_type": "Visible crop change",
+            "description": "Collision check.", "district": "Central Demo District",
+            "observed_at": self.module.datetime.now(self.module.timezone.utc).date().isoformat(),
+        }
+        with patch.object(self.module, "_unique_observation_ref", return_value=taken):
+            with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+                response = self.client.post("/cases/new", data=fields)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"just taken", response.data)
+        with self.module.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0], 1)
+        leftovers = ([p for p in self.module.UPLOAD_DIR.iterdir()]
+                     if self.module.UPLOAD_DIR.exists() else [])
+        self.assertEqual(leftovers, [])
+
+    def test_backup_restore_round_trip(self):
+        work = Path(self.temp_dir.name) / "backup-roundtrip"
+        live_db = work / "live.db"
+        live_uploads = work / "live-uploads"
+        self.module.init_db(live_db)
+        with self.module.db(live_db) as conn:
+            cursor = conn.execute(
+                "INSERT INTO cases (farm_name, reporter_name, location, crop, issue_type,"
+                " description, observation_ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ("Backup Farm", "Backup Officer", "Sector 7", "Maize", "Visible crop change",
+                 "Round-trip check.", "OBS-BACKUP0001", self.module.utc_timestamp()))
+            conn.execute(
+                "INSERT INTO tasks (case_id, title, created_at) VALUES (?, ?, ?)",
+                (cursor.lastrowid, "Backup task", self.module.utc_timestamp()))
+        live_uploads.mkdir(parents=True)
+        (live_uploads / "blob.bin").write_bytes(b"field-bytes-123")
+        backup_dir = self.module.backup_database(
+            db_path=live_db, upload_dir=live_uploads, dest_dir=work / "snap")
+        self.assertTrue((backup_dir / "farmops.db").exists())
+        self.assertTrue((backup_dir / "uploads" / "blob.bin").exists())
+        with self.module.db(live_db) as conn:
+            conn.execute("DELETE FROM cases")
+        (live_uploads / "blob.bin").write_bytes(b"junk")
+        (live_uploads / "intruder.txt").write_text("junk")
+        with self.assertRaises(ValueError):
+            self.module.restore_database(backup_dir, db_path=live_db, upload_dir=live_uploads)
+        restored = self.module.restore_database(
+            backup_dir, db_path=live_db, upload_dir=live_uploads, force=True)
+        self.assertEqual(restored, live_db)
+        with self.module.db(live_db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0], 1)
+            row = conn.execute("SELECT farm_name, observation_ref FROM cases").fetchone()
+            self.assertEqual((row["farm_name"], row["observation_ref"]),
+                             ("Backup Farm", "OBS-BACKUP0001"))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
+            journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        self.assertEqual(journal.lower(), "wal")
+        self.assertEqual((live_uploads / "blob.bin").read_bytes(), b"field-bytes-123")
+        self.assertFalse((live_uploads / "intruder.txt").exists())
+
+    def test_backup_restore_rejects_bad_inputs(self):
+        work = Path(self.temp_dir.name) / "backup-guards"
+        with self.assertRaises(ValueError):
+            self.module.backup_database(db_path=work / "missing.db", dest_dir=work / "snap")
+        live_db = work / "live.db"
+        self.module.init_db(live_db)
+        first = self.module.backup_database(db_path=live_db, dest_dir=work / "snap")
+        with self.assertRaises(ValueError):
+            self.module.backup_database(db_path=live_db, dest_dir=work / "snap")
+        empty = work / "empty"
+        empty.mkdir(parents=True)
+        with self.assertRaises(ValueError):
+            self.module.restore_database(empty, db_path=live_db, force=True)
+        self.assertTrue(first.exists())
+
+    def test_export_excludes_secrets_and_blobs(self):
+        self.create_case()
+        dest = Path(self.temp_dir.name) / "audit-export.json"
+        made = self.module.export_data(dest)
+        self.assertEqual(made, dest)
+        payload = json.loads(dest.read_text(encoding="utf-8"))
+        self.assertIn("exported_at", payload)
+        self.assertEqual(len(payload["tables"]["cases"]), 1)
+        self.assertIn("farm_name", payload["tables"]["cases"][0])
+        for user in payload["tables"]["users"]:
+            self.assertNotIn("password_hash", user)
+        self.assertNotIn("password_hash", json.dumps(payload))
+        with self.assertRaises(ValueError):
+            self.module.export_data(dest)
+
+    def test_video_container_as_voice_is_rejected(self):
+        for filename, payload in (
+            ("clip.mp4", b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64),
+            ("clip.webm", b"\x1a\x45\xdf\xa3" + b"\x00" * 64),
+        ):
+            with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+                response = self.client.post(
+                    "/cases/new",
+                    data={**self._intake_fields(),
+                          "voice_note": (BytesIO(payload), filename, "video/mp4")},
+                    content_type="multipart/form-data",
+                )
+            self.assertEqual(response.status_code, 400, filename)
+            self.assertIn(b"looks like a video file", response.data, filename)
+        with self.module.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0], 0)
+
+    def test_truncated_image_is_rejected(self):
+        broken = b"\x89PNG\r\n\x1a\n" + b"not-a-real-chunk" * 8
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new",
+                data={**self._intake_fields(),
+                      "photos_overview": (BytesIO(broken), "broken.png", "image/png")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"could not be read as an image", response.data)
+
+    def test_oversized_dimension_image_is_rejected(self):
+        big = self._png_bytes(width=12001, height=10)
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            response = self.client.post(
+                "/cases/new",
+                data={**self._intake_fields(),
+                      "photos_overview": (BytesIO(big), "huge.png", "image/png")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"12000-pixel", response.data)
+
+    def test_followup_photo_over_cumulative_cap_rejected(self):
+        full = dict(self._intake_fields())
+        for slot in ("photos_overview", "photos_affected", "photos_healthy", "photos_detail"):
+            full[slot] = (BytesIO(self._png_bytes()), slot + ".png", "image/png")
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            created = self.client.post(
+                "/cases/new", data=full, content_type="multipart/form-data")
+        self.assertEqual(created.status_code, 302)
+        with self.module.db() as conn:
+            case_id = conn.execute("SELECT MAX(id) FROM cases").fetchone()[0]
+        denied = self.client.post(
+            f"/cases/{case_id}/evidence",
+            data={"note": "One more photo.",
+                  "photo": (BytesIO(self._png_bytes()), "extra.png", "image/png")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertEqual(denied.status_code, 200)
+        self.assertIn(b"maximum of 4 photos", denied.data)
+        with self.module.db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM case_evidence WHERE case_id=? AND media_type LIKE 'image/%'",
+                (case_id,)).fetchone()[0]
+        self.assertEqual(count, 4)
+        roomy_id = self.create_case()
+        allowed = self.client.post(
+            f"/cases/{roomy_id}/evidence",
+            data={"note": "First follow-up photo.",
+                  "photo": (BytesIO(self._png_bytes()), "first.png", "image/png")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(allowed.status_code, 302)
+
+    def test_case_byte_quota_rejected(self):
+        with patch.object(self.module, "MAX_CASE_BYTES", 10):
+            with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+                response = self.client.post(
+                    "/cases/new",
+                    data={**self._intake_fields(),
+                          "photos_overview": (BytesIO(self._png_bytes()), "a.png", "image/png")},
+                    content_type="multipart/form-data",
+                )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"per-case storage quota", response.data)
+
+    def test_total_quota_rejected(self):
+        with patch.object(self.module, "MAX_TOTAL_UPLOAD_BYTES", 10):
+            with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+                response = self.client.post(
+                    "/cases/new",
+                    data={**self._intake_fields(),
+                          "photos_overview": (BytesIO(self._png_bytes()), "a.png", "image/png")},
+                    content_type="multipart/form-data",
+                )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"storage is full", response.data)
+
+    def test_purge_removes_only_aged_orphans(self):
+        case_id = self.create_case()
+        with patch.dict(os.environ, {"MODEL_API_KEY": ""}):
+            self.client.post(
+                f"/cases/{case_id}/evidence",
+                data={"note": "With photo.",
+                      "photo": (BytesIO(self._png_bytes()), "kept.png", "image/png")},
+                content_type="multipart/form-data",
+            )
+        uploads = self.module.UPLOAD_DIR
+        with self.module.db() as conn:
+            stored = conn.execute(
+                "SELECT stored_name FROM case_evidence WHERE case_id=?", (case_id,)).fetchone()[0]
+        aged = self.module.datetime.now(self.module.timezone.utc).timestamp() - 7200
+        old_orphan = uploads / "orphan-old.bin"
+        old_orphan.write_bytes(b"stale")
+        os.utime(old_orphan, (aged, aged))
+        fresh_orphan = uploads / "orphan-fresh.bin"
+        fresh_orphan.write_bytes(b"new")
+        report = self.module.purge_unreferenced_uploads(upload_dir=uploads)
+        self.assertEqual(report["removed"], ["orphan-old.bin"])
+        self.assertTrue((uploads / stored).exists())
+        self.assertTrue(fresh_orphan.exists())
+        self.assertFalse(old_orphan.exists())
+        second = uploads / "orphan-second.bin"
+        second.write_bytes(b"stale")
+        os.utime(second, (aged, aged))
+        preview = self.module.purge_unreferenced_uploads(upload_dir=uploads, dry_run=True)
+        self.assertEqual(preview["removed"], ["orphan-second.bin"])
+        self.assertTrue(second.exists())
+
+    def test_migrate_purges_orphans(self):
+        work = Path(self.temp_dir.name) / "migrate-purge"
+        env = dict(os.environ)
+        env["FLASK_SECRET_KEY"] = "migrate-purge-test-secret"
+        env["FARMOPS_ENV_FILE"] = str(work / "no-such-env")
+        env["FARMOPS_DB_PATH"] = str(work / "m.db")
+        env["FARMOPS_UPLOAD_DIR"] = str(work / "uploads")
+        first = subprocess.run(
+            [sys.executable, "app.py", "--migrate"],
+            cwd=self.module.BASE_DIR, env=env,
+            capture_output=True, text=True, timeout=300)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        uploads = work / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        orphan = uploads / "crash-leftover.bin"
+        orphan.write_bytes(b"stale")
+        aged = self.module.datetime.now(self.module.timezone.utc).timestamp() - 7200
+        os.utime(orphan, (aged, aged))
+        second = subprocess.run(
+            [sys.executable, "app.py", "--migrate"],
+            cwd=self.module.BASE_DIR, env=env,
+            capture_output=True, text=True, timeout=300)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("reconciled", second.stdout)
+        self.assertFalse(orphan.exists())
 
 
 if __name__ == "__main__":

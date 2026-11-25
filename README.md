@@ -22,7 +22,7 @@ Agricultural extension workers often need to gather incomplete reports, decide w
 - Structured assessments that separate observations, tentative hypotheses, missing information, follow-up questions, and coordinated actions.
 - Response validation with a clearly labelled workflow fallback if the API is unavailable or returns invalid data.
 - Optional JPEG, PNG, and WebP photo evidence, passed to Muse Spark when configured and stored outside the public static directory.
-- Optional field voice notes (WAV up to 10 MB needs no extra tools; MP3/M4A/OGG/WebM/MP4 need ffmpeg on the server), transcribed by Muse Voice Transcribe and analysed alongside the written description.
+- Optional field voice notes (WAV up to 10 MB needs no extra tools; MP3/M4A/OGG need ffmpeg on the server; video containers such as MP4/WebM are rejected as voice notes), transcribed by Muse Voice Transcribe and analysed alongside the written description.
 - Evidence consistency notes: the assessment records how report text, voice transcript, and photographs relate (agreements, conflicts, single-source limits, missing evidence), rendered from the latest assessment run.
 - Closed-loop case story: originally reported, officer-verified, field actions, what changed, and still unresolved in one panel with visit recommendations; resolving a case requires an officer review.
 - Relationship graph: server-rendered link chart of reports, candidate clusters, officer decisions, and open evidence requests, with every edge explained and a text equivalent.
@@ -117,6 +117,8 @@ Production runs behind gunicorn (Linux/Docker) or waitress (Windows); the Flask 
    `-v farmops-data:/srv/farmops/data -e FARMOPS_DB_PATH=/srv/farmops/data/farmops.db -e FARMOPS_UPLOAD_DIR=/srv/farmops/data/uploads`.
    Without the volume, the SQLite database and uploads are lost when the container is replaced.
 4. Windows (PowerShell, from the repo root): `$env:PYTHONPATH="$PWD"; waitress-serve --listen=0.0.0.0:8000 wsgi:app`.
+5. Back up before upgrades: `python app.py --backup [DEST]` (database plus uploads snapshot). Restore with the app stopped: `python app.py --restore BACKUP_DIR --force`. Audit export: `python app.py --export data.json` (metadata only; password hashes excluded).
+6. Retention: referenced evidence is kept indefinitely (append-only audit); each case holds at most 4 photos within a 64 MB quota. Unreferenced uploads older than 60 minutes are purged on `--migrate`; preview with `python app.py --purge-uploads --dry-run`.
 
 ## Meta Model API
 

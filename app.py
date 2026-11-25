@@ -68,14 +68,20 @@ ALLOWED_IMAGE_TYPES = {
     ),
 }
 MAX_VOICE_BYTES = 10 * 1024 * 1024
+# NOTE: .mp4/.webm are rejected as voice notes because those containers can carry
+# video tracks; .m4a stays because it is audio-only MP4. Dedicated video evidence
+# with a player UI is future work.
 ALLOWED_VOICE_TYPES = {
     ".wav": "audio/wav",
     ".mp3": "audio/mpeg",
     ".m4a": "audio/mp4",
     ".ogg": "audio/ogg",
-    ".webm": "audio/webm",
-    ".mp4": "audio/mp4",
 }
+MAX_PHOTOS_PER_CASE = 4
+MAX_CASE_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 12000
+ORPHAN_GRACE_SECONDS = 3600
 VOICE_TRANSCRIBE_MODEL = "muse-voice-transcribe-1.0"
 VOICE_TRANSCRIBE_URL = META_API_BASE_URL + "/asr/transcribe"
 VOICE_TRANSCRIBE_TIMEOUT_SECONDS = 300.0
@@ -164,9 +170,12 @@ def security_headers(response):
     return response
 
 
+DB_TIMEOUT_SECONDS = 30.0
+
+
 @contextmanager
-def db():
-    conn = sqlite3.connect(DB_PATH)
+def db(path=None):
+    conn = sqlite3.connect(path if path is not None else DB_PATH, timeout=DB_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -178,8 +187,10 @@ def db():
         conn.close()
 
 
-def init_db():
-    with db() as conn:
+def init_db(db_path=None):
+    target = Path(db_path) if db_path is not None else DB_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with db(db_path) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,6 +368,30 @@ def init_db():
         evidence_columns = {row["name"] for row in conn.execute("PRAGMA table_info(case_evidence)")}
         if "shot_type" not in evidence_columns:
             conn.execute("ALTER TABLE case_evidence ADD COLUMN shot_type TEXT NOT NULL DEFAULT ''")
+        conn.commit()  # journal mode cannot change inside a transaction
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        for name, table, column in (
+            ("idx_cases_district", "cases", "district"),
+            ("idx_cases_status", "cases", "status"),
+            ("idx_cases_review_status", "cases", "review_status"),
+            ("idx_cases_observed_at", "cases", "observed_at"),
+            ("idx_tasks_case_id", "tasks", "case_id"),
+            ("idx_case_reviews_case_id", "case_reviews", "case_id"),
+            ("idx_case_events_case_id", "case_events", "case_id"),
+            ("idx_case_evidence_case_id", "case_evidence", "case_id"),
+            ("idx_case_notes_case_id", "case_notes", "case_id"),
+            ("idx_assessment_runs_case_id", "assessment_runs", "case_id"),
+        ):
+            conn.execute("CREATE INDEX IF NOT EXISTS %s ON %s(%s)" % (name, table, column))
+        for (row_id,) in conn.execute("SELECT id FROM cases WHERE observation_ref=''"):
+            conn.execute(
+                "UPDATE cases SET observation_ref=? WHERE id=?",
+                (_new_observation_ref(), row_id),
+            )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cases_observation_ref ON cases(observation_ref)"
+        )
 
 
 def _get_user_by_id(user_id):
@@ -440,6 +475,20 @@ def _safe_next_url(value):
 
 
 URGENCY_LEVELS = {"Routine", "Soon", "Urgent field review", "Needs review"}
+
+
+def _new_observation_ref():
+    return "OBS-%s" % uuid.uuid4().hex[:12].upper()
+
+
+def _unique_observation_ref(conn, attempts=10):
+    for _ in range(attempts):
+        ref = _new_observation_ref()
+        if not conn.execute(
+            "SELECT 1 FROM cases WHERE observation_ref=?", (ref,)
+        ).fetchone():
+            return ref
+    raise ValueError("Could not mint a unique observation ref.")
 
 
 def utc_timestamp():
@@ -1144,12 +1193,10 @@ def _sniff_audio(data, extension):
         return data.startswith(b"ID3") or (
             len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0
         )
-    if extension in (".m4a", ".mp4"):
+    if extension == ".m4a":
         return len(data) > 11 and data[4:8] == b"ftyp"
     if extension == ".ogg":
         return data.startswith(b"OggS")
-    if extension == ".webm":
-        return data.startswith(b"\x1a\x45\xdf\xa3")
     return False
 
 
@@ -1159,6 +1206,11 @@ def _read_voice_upload(uploaded):
     extension = Path(uploaded.filename).suffix.lower()
     mime_type = ALLOWED_VOICE_TYPES.get(extension)
     original_name = uploaded.filename.replace("\\", "/").rsplit("/", 1)[-1][:120]
+    if extension in (".mp4", ".webm"):
+        raise ValueError(
+            f"Voice note {original_name!r} looks like a video file; "
+            "attach WAV, MP3, M4A, or OGG audio instead."
+        )
     if mime_type is None:
         raise ValueError(
             f"Voice note {original_name!r} has an unsupported audio type."
@@ -1282,6 +1334,58 @@ def _transcribe_upload(extension, data, original_name, context_terms):
     return transcribe_voice_note(audio, original_name, context_terms)
 
 
+def _validate_image_content(data):
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            width, height = img.size
+            if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+                raise ValueError(
+                    "Photo dimensions exceed the %d-pixel limit." % MAX_IMAGE_DIMENSION
+                )
+            img.verify()
+    except Image.DecompressionBombError as exc:
+        raise ValueError("Photo dimensions exceed the supported limit.") from exc
+    except (OSError, SyntaxError) as exc:
+        raise ValueError("A photo could not be read as an image.") from exc
+
+
+def _upload_totals(case_id=None):
+    case_photos = 0
+    case_bytes = 0
+    if case_id is not None:
+        with db() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM case_evidence "
+                "WHERE case_id=? AND media_type LIKE 'image/%'",
+                (case_id,),
+            ).fetchone()
+            case_photos = row[0]
+            case_bytes = conn.execute(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM case_evidence WHERE case_id=?",
+                (case_id,),
+            ).fetchone()[0]
+    total_bytes = 0
+    if UPLOAD_DIR.exists():
+        total_bytes = sum(
+            path.stat().st_size for path in UPLOAD_DIR.iterdir() if path.is_file()
+        )
+    return case_photos, case_bytes, total_bytes
+
+
+def _check_upload_quota(case_id, new_photos, new_bytes):
+    existing_photos, existing_bytes, total_bytes = _upload_totals(case_id)
+    if existing_photos + new_photos > MAX_PHOTOS_PER_CASE:
+        raise ValueError(
+            "This case already has the maximum of %d photos." % MAX_PHOTOS_PER_CASE
+        )
+    if existing_bytes + new_bytes > MAX_CASE_BYTES:
+        raise ValueError("This upload would exceed the per-case storage quota.")
+    if total_bytes + new_bytes > MAX_TOTAL_UPLOAD_BYTES:
+        raise ValueError("Server upload storage is full. Contact an administrator.")
+
+
 def _read_labeled_photos(entries):
     uploads = [(file, shot) for file, shot in entries if file and file.filename]
     if len(uploads) > MAX_PHOTOS:
@@ -1299,6 +1403,7 @@ def _read_labeled_photos(entries):
         mime_type, signature_check = image_type
         if not signature_check(data):
             raise ValueError("A photo's contents do not match its file type.")
+        _validate_image_content(data)
         original_name = uploaded.filename.replace("\\", "/").rsplit("/", 1)[-1][:120]
         photos.append((extension, mime_type, data, original_name,
                         shot_type if shot_type in SHOT_TYPES else ""))
@@ -2046,7 +2151,7 @@ def new_case():
             "observed_at": observed_at,
             "latitude": latitude,
             "longitude": longitude,
-            "observation_ref": f"OBS-{uuid.uuid4().hex[:12].upper()}",
+            "observation_ref": _new_observation_ref(),
         })
         data.update(evidence_details)
         try:
@@ -2055,6 +2160,12 @@ def new_case():
                 labeled_uploads.append((request.files.get(f"photos_{slot}"), slot))
             photos = _read_labeled_photos(labeled_uploads)
             voice_upload = _read_voice_upload(request.files.get("voice_note"))
+            voice_bytes = voice_upload[2] if voice_upload else b""
+            _check_upload_quota(
+                None,
+                len(photos),
+                sum(len(content) for _, _, content, _, _ in photos) + len(voice_bytes),
+            )
         except ValueError as exc:
             flash(str(exc), "error")
             return render_template("new_case.html", data=data), 400
@@ -2087,6 +2198,7 @@ def new_case():
                 (UPLOAD_DIR / voice_stored).write_bytes(voice_data)
                 saved_paths.append(voice_stored)
             with db() as conn:
+                data["observation_ref"] = _unique_observation_ref(conn)
                 cur = conn.execute("""
                     INSERT INTO cases
                     (farm_name, reporter_name, location, crop, issue_type, description,
@@ -2223,6 +2335,13 @@ def new_case():
                         "FarmOps AI",
                         {"title": item, "source": "initial assessment"},
                     )
+        except sqlite3.IntegrityError:
+            for filename in saved_paths:
+                path = UPLOAD_DIR / filename
+                if path.exists():
+                    path.unlink()
+            flash("That observation reference was just taken. Please submit again.", "error")
+            return render_template("new_case.html", data=data), 400
         except Exception:
             for filename in saved_paths:
                 path = UPLOAD_DIR / filename
@@ -2530,6 +2649,12 @@ def add_evidence(case_id):
     try:
         photos = _read_labeled_photos([(upload, shot)] if upload else [])
         voice_entry = _read_voice_upload(voice_file)
+        voice_bytes = voice_entry[2] if voice_entry else b""
+        _check_upload_quota(
+            case_id,
+            len(photos),
+            sum(len(content) for _, _, content, _, _ in photos) + len(voice_bytes),
+        )
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(url_for("case_detail", case_id=case_id))
@@ -3006,10 +3131,180 @@ def seed_demo_data():
     return len(records)
 
 
+def purge_unreferenced_uploads(older_than_seconds=ORPHAN_GRACE_SECONDS, db_path=None,
+                               upload_dir=None, dry_run=False):
+    """Delete upload files referenced by neither cases nor evidence rows.
+
+    Only files older than the grace period are removed, so a file written
+    moments ago by a concurrent request is never deleted. Returns a report dict.
+    """
+    upload_dir = Path(upload_dir) if upload_dir is not None else UPLOAD_DIR
+    if not upload_dir.exists():
+        return {"scanned": 0, "removed": []}
+    cutoff = datetime.now(timezone.utc).timestamp() - older_than_seconds
+    with db(db_path) as conn:
+        known = set()
+        for (blob,) in conn.execute("SELECT evidence_paths FROM cases"):
+            try:
+                paths = json.loads(blob or "[]")
+            except (ValueError, TypeError):
+                continue
+            if isinstance(paths, list):
+                known.update(str(name) for name in paths)
+        for (name,) in conn.execute("SELECT stored_name FROM case_evidence"):
+            known.add(name)
+    removed = []
+    scanned = 0
+    for path in upload_dir.iterdir():
+        if not path.is_file():
+            continue
+        scanned += 1
+        if path.name in known or path.stat().st_mtime > cutoff:
+            continue
+        removed.append(path.name)
+        if not dry_run:
+            path.unlink()
+    return {"scanned": scanned, "removed": removed}
+
+
+def _cli_value(flag):
+    try:
+        position = os.sys.argv.index(flag)
+    except ValueError:
+        return None
+    if position + 1 >= len(os.sys.argv):
+        return None
+    value = os.sys.argv[position + 1]
+    return value if value and not value.startswith("-") else None
+
+
+def backup_database(db_path=None, upload_dir=None, dest_dir=None):
+    """Online backup: SQLite backup-API copy plus an uploads snapshot."""
+    db_path = Path(db_path) if db_path is not None else DB_PATH
+    upload_dir = Path(upload_dir) if upload_dir is not None else UPLOAD_DIR
+    if not db_path.exists():
+        raise ValueError("Database file not found: %s" % db_path)
+    if dest_dir is None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        dest_dir = db_path.parent / ("farmops-backup-" + stamp)
+    dest_dir = Path(dest_dir)
+    if dest_dir.exists():
+        raise ValueError("Backup destination already exists: %s" % dest_dir)
+    dest_dir.mkdir(parents=True)
+    source = sqlite3.connect(db_path)
+    try:
+        dest = sqlite3.connect(dest_dir / "farmops.db")
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        source.close()
+    if upload_dir.exists():
+        shutil.copytree(upload_dir, dest_dir / "uploads")
+    return dest_dir
+
+
+def restore_database(backup_dir, db_path=None, upload_dir=None, force=False):
+    """Restore a backup over the live database and uploads. Requires force."""
+    if not force:
+        raise ValueError("Refusing to overwrite live data without force=True (--force). Stop the app first.")
+    backup_dir = Path(backup_dir)
+    source_db = backup_dir / "farmops.db"
+    if not source_db.exists():
+        raise ValueError("Not a FarmOps backup (missing farmops.db): %s" % backup_dir)
+    probe = sqlite3.connect(source_db)
+    try:
+        tables = {row[0] for row in probe.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        probe.close()
+    if "cases" not in tables:
+        raise ValueError("Backup database has no cases table: %s" % source_db)
+    db_path = Path(db_path) if db_path is not None else DB_PATH
+    upload_dir = Path(upload_dir) if upload_dir is not None else UPLOAD_DIR
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(source_db)
+    try:
+        dest = sqlite3.connect(db_path)
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    finally:
+        source.close()
+    fresh = sqlite3.connect(db_path)
+    try:
+        fresh.execute("PRAGMA journal_mode=WAL")
+        fresh.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        fresh.close()
+    backup_uploads = backup_dir / "uploads"
+    if backup_uploads.exists():
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir)
+        shutil.copytree(backup_uploads, upload_dir)
+    return db_path
+
+
+def export_data(dest_path, db_path=None):
+    """Export case data (metadata only: no file blobs, no password hashes) as JSON."""
+    db_path = db_path if db_path is not None else DB_PATH
+    dest_path = Path(dest_path)
+    if dest_path.exists():
+        raise ValueError("Export destination already exists: %s" % dest_path)
+    data = {"exported_at": utc_timestamp(), "tables": {}}
+    with db(db_path) as conn:
+        for table in ("cases", "tasks", "case_reviews", "case_events",
+                      "case_evidence", "case_notes", "assessment_runs", "users"):
+            rows = conn.execute("SELECT * FROM %s ORDER BY id" % table).fetchall()
+            data["tables"][table] = [dict(row) for row in rows]
+    for user in data["tables"]["users"]:
+        user.pop("password_hash", None)
+    dest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return dest_path
+
+
 if __name__ == "__main__":
-    if "--migrate" in os.sys.argv:
+    if "--backup" in os.sys.argv:
+        try:
+            made = backup_database(dest_dir=_cli_value("--backup"))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print("Backup written to %s." % made)
+    elif "--restore" in os.sys.argv:
+        src = _cli_value("--restore")
+        if src is None or "--force" not in os.sys.argv:
+            raise SystemExit(
+                "Usage: python app.py --restore BACKUP_DIR --force "
+                "(this overwrites live data; stop the app first)."
+            )
+        try:
+            restored = restore_database(src, force=True)
+            init_db()
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print("Restored %s over live data; schema migrated forward." % restored)
+    elif "--export" in os.sys.argv:
+        dest = _cli_value("--export")
+        if dest is None:
+            raise SystemExit("Usage: python app.py --export DEST.json")
+        try:
+            made = export_data(dest)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print("Exported case data (no password hashes, no file blobs) to %s." % made)
+    elif "--purge-uploads" in os.sys.argv:
+        dry_run = "--dry-run" in os.sys.argv
+        report = purge_unreferenced_uploads(dry_run=dry_run)
+        print("Uploads reconciled: %d scanned, %d orphan(s)%s."
+              % (report["scanned"], len(report["removed"]),
+                 " would be removed" if dry_run else " removed"))
+    elif "--migrate" in os.sys.argv:
         init_db()
         print("Database schema is up to date (%s)." % DB_PATH)
+        report = purge_unreferenced_uploads()
+        print("Uploads reconciled: %d scanned, %d orphan(s) removed."
+              % (report["scanned"], len(report["removed"])))
     elif "--create-user" in os.sys.argv:
         parser = argparse.ArgumentParser(description="Create a FarmOps AI user.")
         parser.add_argument("--create-user", metavar="USERNAME", required=True)
