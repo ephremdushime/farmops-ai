@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Sign in · FarmOps AI{% endblock %}
+{% block page_context %}Sign In{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">ACCOUNT ACCESS</p><h1>Sign in</h1><p class="lead">Officer and decision-maker accounts are created by an administrator.</p></div></div>
+<form class="form-card" method="post" action="{{ url_for('login') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="next" value="{{ next or '' }}">
+  <div class="form-grid">
+    <label>Username<input required name="username" maxlength="120" autocomplete="username"></label>
+    <label>Password<input required type="password" name="password" autocomplete="current-password"></label>
+  </div>
+  <div class="form-actions"><button class="button primary" type="submit">Sign in</button></div>
+</form>
+{% endblock %}

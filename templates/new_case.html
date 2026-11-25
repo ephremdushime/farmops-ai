@@ -5,6 +5,7 @@
 <div class="page-heading"><div><a class="back" href="{{ url_for('field_reports') }}">← Field reports</a><p class="eyebrow">FIELD OBSERVATION · EVIDENCE INTAKE</p><h1>Report field evidence</h1><p class="lead">Capture the observation and its context. Record what was seen separately from assumptions; coordinates are optional and should never be estimated. Optional evidence sections raise the completeness score and sharpen the AI assessment.</p></div></div>
 <div class="intake-meter" role="status" aria-label="Evidence completeness meter"><div class="intake-meter-head"><strong>Evidence completeness</strong><span id="intake-meter-label">0 of 15 evidence fields</span></div><div class="intake-meter-track"><span id="intake-meter-fill"></span></div></div>
 <form class="form-card" method="post" enctype="multipart/form-data" data-loading-text="Creating case and requesting assessment…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="form-grid">
     <fieldset class="form-section full"><legend>Observation (required)</legend>
       <div class="form-grid">
@@ -50,7 +51,7 @@
         <label>4 · Detail<input type="file" name="photos_detail" data-evidence accept="image/jpeg,image/png,image/webp"><small>Leaf, stem, or soil close-up.</small></label>
         <label>Field voice note (optional)<input type="file" name="voice_note" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.mp4"><small>Spoken observations: transcribed and included in the assessment. WAV under 10 MB needs no extra tools.</small></label>
       </div>
-      <small class="muted">JPEG, PNG, or WebP, 5 MB each. Originals are stored outside public static assets. This prototype has no sign-in, so case links are not access-controlled. Pixels are sent to Meta when API access is configured; embedded metadata is stripped first.</small>
+      <small class="muted">JPEG, PNG, or WebP, 5 MB each. Originals are stored outside public static assets. Access is controlled by signed-in accounts; only officers and admins can submit observations. Pixels are sent to Meta when API access is configured; embedded metadata is stripped first.</small>
     </fieldset>
     <fieldset class="coordinate-fields full"><legend>Map coordinates (optional)</legend><div class="coordinate-grid"><label>Latitude<input name="latitude" type="number" step="any" min="-90" max="90" value="{{ data.get('latitude','') }}" placeholder="-1.95"></label><label>Longitude<input name="longitude" type="number" step="any" min="-180" max="180" value="{{ data.get('longitude','') }}" placeholder="30.06"></label></div><small>Enter both coordinates only when known. Stored as approximate report locations, not farm boundaries.</small></fieldset>
   </div>

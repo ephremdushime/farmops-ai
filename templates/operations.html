@@ -9,7 +9,8 @@
 <p><a href="{{ url_for('case_detail', case_id=task['case_number']) }}">Case #{{ task['case_number'] }} · {{ task['farm_name'] }} · {{ task['location'] }}</a></p>
 {% if task['due_date'] %}<p><strong>Due:</strong> {{ task['due_date'] }}</p>{% endif %}
 {% if task['outcome'] %}<p><strong>Recorded outcome:</strong> {{ task['outcome'] }}</p>{% endif %}
-{% if task['status']=='Pending' %}<form class="operation-complete" method="post" action="{{ url_for('toggle_task', task_id=task['id']) }}"><label>Record field outcome before completing<textarea name="outcome" rows="2" maxlength="2000" required></textarea></label><button class="button primary" type="submit">Complete action</button></form>{% endif %}
+{% if task['status']=='Pending' and current_user and current_user['role'] in ['officer', 'admin'] %}<form class="operation-complete" method="post" action="{{ url_for('toggle_task', task_id=task['id']) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Record field outcome before completing<textarea name="outcome" rows="2" maxlength="2000" required></textarea></label><button class="button primary" type="submit">Complete action</button></form>{% endif %}
 </article>
 {% endfor %}</div>{% else %}<div class="empty"><h3>No {{ selected_status|lower }} actions</h3><p>Field actions appear here after they are created on a case.</p></div>{% endif %}
 {% endblock %}

@@ -45,6 +45,7 @@ source .venv/bin/activate
 
 pip install -r requirements.txt
 cp .env.example .env
+python app.py --migrate   # first run: create the database
 python app.py
 ```
 
@@ -91,7 +92,31 @@ python app.py
 
 Keep the environment variable set in the same terminal when running the app. Do not copy real data into the demonstration database.
 
-**Security and privacy:** Do not commit `.env`, API keys, real farmer personal information, or sensitive farm records. Use synthetic test cases during the hackathon. Uploaded images are stored under the ignored `instance/` directory, but the prototype has no authentication or authorization: anyone who can reach the app and obtain a case link can access its evidence and submit reviews. Do not deploy it with real or sensitive records.
+**Security and privacy:** Do not commit `.env`, API keys, real farmer personal information, or sensitive farm records. Use synthetic test cases during the hackathon. Uploaded images are stored under the ignored `instance/` directory, Access is controlled by signed-in accounts (officer, decision-maker, admin); anonymous visitors are redirected to sign-in, and only officers and admins can submit observations, evidence, or reviews. Do not deploy it with real or sensitive records.
+
+## User accounts
+
+Sign-in is required. Create accounts with `python app.py --create-user USERNAME --role officer`
+(roles: `officer`, `decision_maker`, `admin`; minimum 12-character password, prompted securely).
+Officers and admins can submit observations, evidence, and reviews; decision-makers have read-only
+access. There is no self-registration or web account management yet. For local http development, set FARMOPS_ENV=development in `.env` (Secure cookies require https otherwise); production must never set it. Seed the first accounts with:
+`python app.py --create-user <officer-name> --role officer`
+`python app.py --create-user <analyst-name> --role decision_maker`
+(use `--role admin` for an administrator). There are no default passwords by design.
+
+## Deploy
+
+Production runs behind gunicorn (Linux/Docker) or waitress (Windows); the Flask dev server
+(`python app.py`) is for local work only.
+
+1. Set `FLASK_SECRET_KEY` (required) and `MODEL_API_KEY`; leave `FARMOPS_ENV` unset for production.
+2. Create or upgrade the database: `python app.py --migrate` (also the Procfile `release` phase).
+3. Linux/Docker (from the repo root): `PYTHONPATH=. gunicorn --bind 0.0.0.0:8000 --workers 2 wsgi:app`, or
+   `docker build -t farmops-ai .` then run with `-p 8000:8000`, `-e FLASK_SECRET_KEY=...`,
+   `-e MODEL_API_KEY=...`, and a data volume:
+   `-v farmops-data:/srv/farmops/data -e FARMOPS_DB_PATH=/srv/farmops/data/farmops.db -e FARMOPS_UPLOAD_DIR=/srv/farmops/data/uploads`.
+   Without the volume, the SQLite database and uploads are lost when the container is replaced.
+4. Windows (PowerShell, from the repo root): `$env:PYTHONPATH="$PWD"; waitress-serve --listen=0.0.0.0:8000 wsgi:app`.
 
 ## Meta Model API
 
@@ -112,7 +137,7 @@ The prototype should ask for missing information and coordinate review. It shoul
 
 ## Scope and limitations
 
-This is an early hackathon prototype, not production-ready software. It has not undergone security, agronomic, accessibility, or field validation review. Authentication, role-based access, deployment hardening, offline capture/synchronization, external weather or government data, satellite integrations, and validated yield forecasting remain future work. The prototype has no CSRF tokens or sign-in; session cookies are HttpOnly and SameSite=Lax, and any deployment must add CSRF protection, HTTPS-only cookies, and a production FLASK_SECRET_KEY. Muse Spark is used for language/image interpretation, not crop-yield forecasting. Spatial groupings are candidate links from simple distance/time/category rules, not validated disease or outbreak detections.
+This is an early hackathon prototype, not production-ready software. It has not undergone security, agronomic, accessibility, or field validation review. deployment hardening, offline capture/synchronization, external weather or government data, satellite integrations, and validated yield forecasting remain future work. All POST forms carry CSRF tokens validated server-side; session cookies are HttpOnly and SameSite=Lax (plus Secure in production, which also redirects http to https and sends HSTS). Booting refuses to start without FLASK_SECRET_KEY. Muse Spark is used for language/image interpretation, not crop-yield forecasting. Spatial groupings are candidate links from simple distance/time/category rules, not validated disease or outbreak detections.
 
 ## Hackathon work log
 

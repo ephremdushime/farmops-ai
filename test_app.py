@@ -7,6 +7,8 @@ import openai
 import importlib
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 import wave
@@ -24,8 +26,13 @@ class FarmOpsSmokeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(cls.temp_dir.name) / "test-farmops.db"
-        with patch.dict(os.environ, {"FARMOPS_DB_PATH": str(db_path)}):
+        with patch.dict(os.environ, {
+            "FARMOPS_DB_PATH": str(db_path),
+            "FLASK_SECRET_KEY": "test-secret-not-for-production",
+            "FARMOPS_ENV": "development",
+        }):
             cls.module = importlib.import_module("app")
+        cls.module.init_db()
         cls.module.UPLOAD_DIR = Path(cls.temp_dir.name) / "uploads"
         cls.client = cls.module.app.test_client()
 
@@ -34,17 +41,70 @@ class FarmOpsSmokeTests(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     def setUp(self):
-        self.client = self.module.app.test_client()
+        self.client = self.csrf_client()
         with self.module.db() as conn:
             conn.execute("DELETE FROM case_reviews")
             conn.execute("DELETE FROM case_evidence")
             conn.execute("DELETE FROM case_events")
             conn.execute("DELETE FROM tasks")
             conn.execute("DELETE FROM cases")
+            conn.execute("DELETE FROM users")
+        self.officer_username = "Officer One"
+        self.officer_password = "officer-test-password-1"
+        self.module.create_user(self.officer_username, self.officer_password, "officer")
+        signed_in = self.login(self.officer_username, self.officer_password)
+        self.assertEqual(signed_in.status_code, 302)
         if self.module.UPLOAD_DIR.exists():
             for path in self.module.UPLOAD_DIR.iterdir():
                 if path.is_file():
                     path.unlink()
+
+    def login(self, username, password, client=None):
+        client = client if client is not None else self.client
+        return client.post("/login", data={"username": username, "password": password})
+
+    def csrf_token(self, client):
+        with client.session_transaction() as sess:
+            token = sess.get("_csrf_token")
+        if not token:
+            client.get("/login")
+            with client.session_transaction() as sess:
+                token = sess["_csrf_token"]
+        return token
+
+    def csrf_client(self, client=None):
+        client = client if client is not None else self.module.app.test_client()
+        real_post = client.post
+
+        def post_with_csrf(*args, **kwargs):
+            data = kwargs.get("data")
+            if data is None:
+                kwargs["data"] = {"csrf_token": self.csrf_token(client)}
+            elif isinstance(data, dict):
+                data = dict(data)
+                data.setdefault("csrf_token", self.csrf_token(client))
+                kwargs["data"] = data
+            return real_post(*args, **kwargs)
+
+        client.post = post_with_csrf
+        return client
+
+    def anonymous_client(self):
+        return self.csrf_client()
+
+    def raw_client(self):
+        return self.module.app.test_client()
+
+    def login_raw(self, username, password):
+        client = self.raw_client()
+        client.get("/login")
+        with client.session_transaction() as sess:
+            token = sess["_csrf_token"]
+        response = client.post("/login", data={
+            "username": username, "password": password, "csrf_token": token,
+        })
+        self.assertEqual(response.status_code, 302)
+        return client
 
     def create_case(self, **overrides):
         data = {
@@ -1472,12 +1532,14 @@ class FarmOpsSmokeTests(unittest.TestCase):
         case_id = self.create_case()
         first = self.client.post(
             f"/cases/{case_id}/review",
-            data=self._review_payload(reviewer="Officer One", decision="follow_up"),
+            data=self._review_payload(decision="follow_up"),
         )
+        self.module.create_user("Officer Two", "officer-test-password-2", "officer")
+        self.login("Officer Two", "officer-test-password-2")
         second = self.client.post(
             f"/cases/{case_id}/review",
             data=self._review_payload(
-                reviewer="Officer Two", decision="verified",
+                decision="verified",
                 reviewed_summary="Second review confirms the report.",
             ),
         )
@@ -1908,6 +1970,363 @@ class FarmOpsSmokeTests(unittest.TestCase):
             conn.execute("UPDATE cases SET is_synthetic=1 WHERE id=?", (case_id,))
         page = self.client.get("/intelligence/graph").data
         self.assertIn(b"SYNTHETIC", page)
+
+    def test_login_logout_round_trip(self):
+        client = self.anonymous_client()
+        denied = client.get("/", follow_redirects=False)
+        self.assertEqual(denied.status_code, 302)
+        self.assertIn("/login", denied.headers["Location"])
+        signed_in = self.login(self.officer_username, self.officer_password, client=client)
+        self.assertEqual(signed_in.status_code, 302)
+        self.assertEqual(client.get("/").status_code, 200)
+        signed_out = client.post("/logout")
+        self.assertEqual(signed_out.status_code, 302)
+        self.assertEqual(client.get("/").status_code, 302)
+
+    def test_login_rejects_bad_password(self):
+        client = self.anonymous_client()
+        response = self.login(self.officer_username, "wrong-password-here", client=client)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Invalid username or password.", response.data)
+        self.assertEqual(client.get("/").status_code, 302)
+
+    def test_anonymous_requests_are_redirected_to_login(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            task_id = conn.execute(
+                "SELECT id FROM tasks WHERE case_id=?", (case_id,)
+            ).fetchone()[0]
+        client = self.anonymous_client()
+        for path in ("/", "/field-reports", "/intelligence", "/intelligence/graph",
+                     "/district-brief", "/risk-map", "/verification", "/operations",
+                     "/cases/new", f"/cases/{case_id}",
+                     f"/cases/{case_id}/evidence/anything.png"):
+            response = client.get(path)
+            self.assertEqual(response.status_code, 302, path)
+            self.assertIn("/login", response.headers["Location"], path)
+        for path, data in (
+            ("/cases/new", {"farm_name": "Anon Farm"}),
+            (f"/cases/{case_id}/review", {"decision": "verified"}),
+            (f"/cases/{case_id}/tasks", {"title": "Anon task"}),
+            (f"/cases/{case_id}/evidence", {"note": "Anon note"}),
+            (f"/cases/{case_id}/reassess", {}),
+            (f"/tasks/{task_id}/toggle", {"outcome": "Anon outcome"}),
+            (f"/cases/{case_id}/status", {"status": "In progress"}),
+        ):
+            response = client.post(path, data=data)
+            self.assertEqual(response.status_code, 302, path)
+            self.assertIn("/login", response.headers["Location"], path)
+        with self.module.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0], 1)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM tasks WHERE title='Anon task'").fetchone()[0], 0)
+        self.assertEqual(client.get("/health").status_code, 200)
+        self.assertEqual(client.get("/static/style.css").status_code, 200)
+        self.assertEqual(client.get("/login").status_code, 200)
+
+    def test_decision_maker_is_read_only(self):
+        case_id = self.create_case()
+        with self.module.db() as conn:
+            task_id = conn.execute(
+                "SELECT id FROM tasks WHERE case_id=?", (case_id,)
+            ).fetchone()[0]
+        self.module.create_user("Decision Maker", "decision-test-password-1", "decision_maker")
+        client = self.anonymous_client()
+        self.login("Decision Maker", "decision-test-password-1", client=client)
+        for path in ("/", "/field-reports", "/intelligence", "/intelligence/graph",
+                     "/district-brief", "/risk-map", "/verification", "/operations",
+                     f"/cases/{case_id}"):
+            self.assertEqual(client.get(path).status_code, 200, path)
+        self.assertEqual(client.get("/cases/new").status_code, 403)
+        for path, data in (
+            ("/cases/new", {"farm_name": "Reader Farm"}),
+            (f"/cases/{case_id}/review", self._review_payload()),
+            (f"/cases/{case_id}/tasks", {"title": "Reader task"}),
+            (f"/cases/{case_id}/evidence", {"note": "Reader note"}),
+            (f"/cases/{case_id}/reassess", {}),
+            (f"/tasks/{task_id}/toggle", {"outcome": "Reader outcome"}),
+            (f"/cases/{case_id}/status", {"status": "In progress"}),
+        ):
+            self.assertEqual(client.post(path, data=data).status_code, 403, path)
+        with self.module.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM case_reviews").fetchone()[0], 0)
+        detail = client.get(f"/cases/{case_id}").data
+        self.assertIn(b"read-only account", detail)
+        self.assertNotIn(b"Save review to audit trail", detail)
+
+    def test_admin_can_mutate(self):
+        case_id = self.create_case()
+        self.module.create_user("Admin User", "admin-test-password-1", "admin")
+        client = self.anonymous_client()
+        self.login("Admin User", "admin-test-password-1", client=client)
+        response = client.post(f"/cases/{case_id}/status", data={"status": "In progress"})
+        self.assertEqual(response.status_code, 302)
+
+    def test_review_records_session_identity_not_form_name(self):
+        case_id = self.create_case()
+        response = self.client.post(
+            f"/cases/{case_id}/review",
+            data=self._review_payload(reviewer="Impostor Name", decision="verified"),
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.module.db() as conn:
+            review = conn.execute(
+                "SELECT reviewer FROM case_reviews WHERE case_id=?", (case_id,)
+            ).fetchone()
+            event = conn.execute(
+                "SELECT actor FROM case_events WHERE case_id=? AND event_type='officer_review'",
+                (case_id,),
+            ).fetchone()
+        self.assertEqual(review["reviewer"], self.officer_username)
+        self.assertEqual(event["actor"], self.officer_username)
+
+    def test_status_and_evidence_record_session_identity(self):
+        case_id = self.create_case()
+        self.client.post(
+            f"/cases/{case_id}/evidence",
+            data={"note": "Revisit note.", "author": "Someone Else"},
+        )
+        self.client.post(
+            f"/cases/{case_id}/status",
+            data={"status": "In progress", "actor": "Someone Else"},
+        )
+        with self.module.db() as conn:
+            note = conn.execute(
+                "SELECT author FROM case_notes WHERE case_id=?", (case_id,)
+            ).fetchone()
+            event = conn.execute(
+                "SELECT actor FROM case_events WHERE case_id=? AND event_type='case_status_changed'",
+                (case_id,),
+            ).fetchone()
+        self.assertEqual(note["author"], self.officer_username)
+        self.assertEqual(event["actor"], self.officer_username)
+
+    def test_login_next_rejects_external_url(self):
+        client = self.anonymous_client()
+        response = client.post("/login", data={
+            "username": self.officer_username,
+            "password": self.officer_password,
+            "next": "https://evil.example/phish",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/")
+
+    def test_login_next_accepts_internal_path(self):
+        client = self.anonymous_client()
+        response = client.post("/login", data={
+            "username": self.officer_username,
+            "password": self.officer_password,
+            "next": "/verification",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/verification")
+
+    def test_logout_requires_post(self):
+        self.assertEqual(self.client.get("/logout").status_code, 405)
+
+    def test_create_user_validates_input(self):
+        with self.assertRaises(ValueError):
+            self.module.create_user("Officer One", "another-long-password-1", "officer")
+        with self.assertRaises(ValueError):
+            self.module.create_user("New Officer", "short", "officer")
+        with self.assertRaises(ValueError):
+            self.module.create_user("New Officer", "long-enough-password-1", "superuser")
+        with self.assertRaises(ValueError):
+            self.module.create_user("x" * 121, "long-enough-password-1", "officer")
+
+    def test_post_without_csrf_token_is_rejected(self):
+        case_id = self.create_case()
+        client = self.login_raw(self.officer_username, self.officer_password)
+        self.assertEqual(client.get(f"/cases/{case_id}").status_code, 200)
+        response = client.post(f"/cases/{case_id}/status", data={"status": "In progress"})
+        self.assertEqual(response.status_code, 400)
+        with self.module.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT status FROM cases WHERE id=?", (case_id,)).fetchone()[0],
+                "Open",
+            )
+
+    def test_post_with_wrong_csrf_token_is_rejected(self):
+        case_id = self.create_case()
+        client = self.login_raw(self.officer_username, self.officer_password)
+        for bad_token in ("0" * 64, "not-a-valid-token", "tökén"):
+            response = client.post(
+                f"/cases/{case_id}/status",
+                data={"status": "In progress", "csrf_token": bad_token},
+            )
+            self.assertEqual(response.status_code, 400, bad_token)
+        with self.module.db() as conn:
+            self.assertEqual(
+                conn.execute("SELECT status FROM cases WHERE id=?", (case_id,)).fetchone()[0],
+                "Open",
+            )
+
+    def test_csrf_token_is_present_in_forms(self):
+        intake = self.client.get("/cases/new").data
+        self.assertIn(b'name="csrf_token"', intake)
+        case_id = self.create_case()
+        detail = self.client.get(f"/cases/{case_id}").data
+        self.assertIn(b'name="csrf_token"', detail)
+        operations = self.client.get("/operations").data
+        self.assertIn(b'name="csrf_token"', operations)
+        sign_in = self.raw_client().get("/login").data
+        self.assertIn(b'name="csrf_token"', sign_in)
+
+    def test_anonymous_post_with_token_still_requires_login(self):
+        client = self.raw_client()
+        client.get("/login")
+        with client.session_transaction() as sess:
+            token = sess["_csrf_token"]
+        response = client.post("/cases/new", data={"farm_name": "Anon", "csrf_token": token})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+
+    def test_logout_without_token_is_rejected(self):
+        client = self.login_raw(self.officer_username, self.officer_password)
+        self.assertEqual(client.post("/logout").status_code, 400)
+        self.assertEqual(client.get("/").status_code, 200)
+
+    def test_login_without_token_is_rejected(self):
+        client = self.raw_client()
+        response = client.post("/login", data={
+            "username": self.officer_username, "password": self.officer_password,
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(client.get("/").status_code, 302)
+
+    def test_environment_mode_mapping(self):
+        self.assertTrue(self.module._is_production({}))
+        self.assertTrue(self.module._is_production({"FARMOPS_ENV": "production"}))
+        self.assertFalse(self.module._is_production({"FARMOPS_ENV": "development"}))
+        self.assertFalse(self.module._is_production({"FARMOPS_ENV": "Development"}))
+        self.assertFalse(self.module._debug_enabled({}))
+        self.assertFalse(self.module._debug_enabled({"FLASK_DEBUG": "true"}))
+        self.assertTrue(self.module._debug_enabled(
+            {"FLASK_DEBUG": "true", "FARMOPS_ENV": "development"}))
+        self.assertFalse(self.module._debug_enabled(
+            {"FLASK_DEBUG": "false", "FARMOPS_ENV": "development"}))
+
+    def test_session_cookie_secure_follows_production(self):
+        self.assertFalse(self.module.PRODUCTION)
+        self.assertEqual(
+            self.module.app.config["SESSION_COOKIE_SECURE"], self.module.PRODUCTION)
+
+    def test_production_redirects_http_to_https(self):
+        before = self.module.PRODUCTION
+        self.module.PRODUCTION = True
+        self.addCleanup(setattr, self.module, "PRODUCTION", before)
+        client = self.raw_client()
+        moved = client.get("/", follow_redirects=False)
+        self.assertEqual(moved.status_code, 301)
+        self.assertTrue(moved.headers["Location"].startswith("https://"))
+        self.assertEqual(client.get("/health").status_code, 200)
+        static = client.get("/static/style.css")
+        self.assertEqual(static.status_code, 200)
+        static.close()
+        proxied = client.get("/", headers={"X-Forwarded-Proto": "https"},
+                             follow_redirects=False)
+        self.assertEqual(proxied.status_code, 302)
+
+    def test_production_sends_hsts(self):
+        before = self.module.PRODUCTION
+        self.module.PRODUCTION = True
+        self.addCleanup(setattr, self.module, "PRODUCTION", before)
+        response = self.raw_client().get("/health")
+        self.assertTrue(response.headers.get(
+            "Strict-Transport-Security", "").startswith("max-age=31536000"))
+        self.module.PRODUCTION = False
+        plain = self.raw_client().get("/health")
+        self.assertNotIn("Strict-Transport-Security", plain.headers)
+
+    def test_boot_without_secret_fails(self):
+        env = {key: value for key, value in os.environ.items() if key != "FLASK_SECRET_KEY"}
+        env["FARMOPS_ENV_FILE"] = str(Path(self.temp_dir.name) / "no-such-env")
+        proc = subprocess.run(
+            [sys.executable, "-c", "import app"],
+            cwd=self.module.BASE_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("FLASK_SECRET_KEY", proc.stderr)
+
+    def test_production_boot_sets_secure_cookies(self):
+        env = dict(os.environ)
+        env["FLASK_SECRET_KEY"] = "prod-boot-test-secret"
+        env["FARMOPS_ENV_FILE"] = str(Path(self.temp_dir.name) / "no-such-env")
+        env.pop("FARMOPS_ENV", None)
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             "import app; print(app.PRODUCTION, app.app.config['SESSION_COOKIE_SECURE'])"],
+            cwd=self.module.BASE_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "True True")
+
+    def test_import_creates_no_files(self):
+        work = Path(self.temp_dir.name) / "import-purity"
+        db_path = work / "nope.db"
+        upload_dir = work / "nope-uploads"
+        env = dict(os.environ)
+        env["FLASK_SECRET_KEY"] = "import-purity-test-secret"
+        env["FARMOPS_ENV_FILE"] = str(work / "no-such-env")
+        env["FARMOPS_DB_PATH"] = str(db_path)
+        env["FARMOPS_UPLOAD_DIR"] = str(upload_dir)
+        proc = subprocess.run(
+            [sys.executable, "-c", "import app"],
+            cwd=self.module.BASE_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(db_path.exists())
+        self.assertFalse(upload_dir.exists())
+
+    def test_server_port_mapping(self):
+        self.assertEqual(self.module._server_port({}), 5000)
+        self.assertEqual(self.module._server_port({"PORT": "8000"}), 8000)
+        for bad in ("abc", "", "0", "99999", "-1", "8O00"):
+            with self.assertRaises(SystemExit, msg=bad):
+                self.module._server_port({"PORT": bad})
+
+    def test_env_example_covers_every_env_var(self):
+        source = Path(self.module.BASE_DIR, "app.py").read_text(encoding="utf-8")
+        used = set(re.findall(r'os\.getenv\("([A-Z][A-Z0-9_]*)"', source))
+        used |= set(re.findall(r'environ(?:\.get\("|\[")([A-Z][A-Z0-9_]*)', source))
+        example = Path(self.module.BASE_DIR, ".env.example").read_text(encoding="utf-8")
+        documented = set(re.findall(r"^([A-Z][A-Z0-9_]*)\s*=", example, re.MULTILINE))
+        self.assertTrue(used)
+        self.assertEqual(used - documented, set())
+
+    def test_migrate_cli_creates_schema(self):
+        db_path = Path(self.temp_dir.name) / "migrate-cli.db"
+        env = dict(os.environ)
+        env["FLASK_SECRET_KEY"] = "migrate-cli-test-secret"
+        env["FARMOPS_ENV_FILE"] = str(Path(self.temp_dir.name) / "no-such-env")
+        env["FARMOPS_DB_PATH"] = str(db_path)
+        proc = subprocess.run(
+            [sys.executable, "app.py", "--migrate"],
+            cwd=self.module.BASE_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("up to date", proc.stdout)
+        with closing(sqlite3.connect(db_path)) as conn:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({"cases", "tasks", "users"} <= tables)
 
 
 if __name__ == "__main__":

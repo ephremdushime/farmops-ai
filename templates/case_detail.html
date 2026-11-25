@@ -2,6 +2,7 @@
 {% block title %}Case #{{ case['id'] }} · FarmOps AI{% endblock %}
 {% block page_context %}Case #{{ case['id'] }}{% endblock %}
 {% block content %}
+{% if current_user and current_user['role'] not in ['officer', 'admin'] %}<p class="notice">You are signed in with a read-only account: officer actions are hidden on this page.</p>{% endif %}
 <div class="case-heading page-heading">
   <div class="case-heading-main">
     <a class="back" href="{{ url_for('field_reports') }}">← Field reports</a>
@@ -74,23 +75,25 @@
     <h3>Follow-up evidence</h3>
     <ul class="evidence-notes">{% for note in notes %}<li><p>{{ note['note'] }}</p><small>by {{ note['author'] or 'Field team' }} · {{ note['created_at'] }}</small></li>{% endfor %}</ul>
     {% endif %}
-    <form class="followup-form" method="post" action="{{ url_for('add_evidence', case_id=case['id']) }}" enctype="multipart/form-data">
+    {% if current_user and current_user['role'] in ['officer', 'admin'] %}<form class="followup-form" method="post" action="{{ url_for('add_evidence', case_id=case['id']) }}" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>Add follow-up evidence<textarea name="note" rows="2" maxlength="2000" required placeholder="New measurements, observations, or corrections"></textarea></label>
       <div class="followup-row">
-        <label>Author<input name="author" maxlength="120" placeholder="Field team"></label>
+        <p class="muted">Recording as {{ current_user['username'] }}.</p>
         <label>Photo (optional)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></label>
         <label>Voice note (optional)<input type="file" name="voice_note" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.mp4"></label>
         <label>Shot type<select name="shot_type"><option value="">Unspecified</option><option>overview</option><option>affected</option><option>healthy</option><option>detail</option></select></label>
       </div>
       <button class="button secondary" type="submit">Record evidence</button>
-    </form>
-    <form class="status-form" method="post" action="{{ url_for('update_case_status', case_id=case['id']) }}">
+    </form>{% endif %}
+    {% if current_user and current_user['role'] in ['officer', 'admin'] %}<form class="status-form" method="post" action="{{ url_for('update_case_status', case_id=case['id']) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>Case status
         <select name="status">{% for s in ['Open','In progress','Resolved'] %}<option {% if case['status']==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
       </label>
-      <label>Recorded by<input name="actor" maxlength="120" placeholder="Field team"></label>
+      <p class="muted">Recording as {{ current_user['username'] }}.</p>
       <button class="button secondary" type="submit">Update status</button>
-    </form>
+    </form>{% endif %}
   </section>
   <section class="panel plan-panel">
     <p class="eyebrow">MODEL-ASSISTED ASSESSMENT · UNVERIFIED</p>
@@ -111,9 +114,10 @@
       <ol class="audit-list">{% for run in runs %}<li><time>{{ run['created_at'] }}</time><strong>Run {{ run['run_number'] }}</strong><span>{{ run['source'] }}{% if run['model'] %} · {{ run['model'] }}{% endif %}</span><em class="run-changes">{{ run['changes'] }}</em></li>{% endfor %}</ol>
     </details>
     {% endif %}
-    <form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}" data-loading-text="Re-running assessment with latest evidence…">
+    {% if current_user and current_user['role'] in ['officer', 'admin'] %}<form method="post" action="{{ url_for('reassess_case', case_id=case['id']) }}" data-loading-text="Re-running assessment with latest evidence…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-actions"><button class="button secondary" type="submit">Re-run assessment with latest evidence</button></div>
-    </form>
+    </form>{% endif %}
   </section>
 </div>
 <section class="panel loop-panel">
@@ -150,10 +154,11 @@
     <div><p class="eyebrow">HUMAN VERIFICATION</p><h2>Officer review</h2></div>
     <span class="pill review-pill">{{ case['review_status'] }}</span>
   </div>
-  <p class="muted">Review the report and evidence. Record a decision and any corrections. This prototype records the reviewer name but does not authenticate identities.</p>
-  <form method="post" action="{{ url_for('review_case', case_id=case['id']) }}" class="review-form">
+  <p class="muted">Review the report and evidence. Record a decision and any corrections. Reviews are recorded under your signed-in officer account.</p>
+  {% if current_user and current_user['role'] in ['officer', 'admin'] %}<form method="post" action="{{ url_for('review_case', case_id=case['id']) }}" class="review-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="review-fields">
-      <label>Reviewing officer<input name="reviewer" required maxlength="120" placeholder="Officer name"></label>
+      <p class="muted">Reviewing officer: <strong>{{ current_user['username'] }}</strong></p>
       <label>Decision
         <select name="decision" required>
           <option value="">Select a decision</option>
@@ -208,7 +213,7 @@
       <textarea name="notes" rows="3" maxlength="2000"></textarea>
     </label>
     <div class="form-actions"><button class="button primary" type="submit">Save review to audit trail</button></div>
-  </form>
+  </form>{% endif %}
   {% if reviews %}
   <div class="review-history">
     <h3>Review audit trail</h3>
@@ -250,14 +255,16 @@
   {% if tasks %}
   <div class="task-list">
     {% for t in tasks %}
-    <div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}"><strong>{{ t['title'] }}</strong>{% if t['kind']=='evidence' %}<span class="pill">Evidence</span>{% endif %}{% if t['due_date'] %}<small> · Due {{ t['due_date'] }}</small>{% endif %}{% if t['status']=='Completed' and t['outcome'] %}<p class="task-outcome">Outcome: {{ t['outcome'] }}</p>{% endif %}</div><form class="task-action-form" method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}">{% if t['status']=='Pending' %}<label>What happened?<textarea name="outcome" rows="2" maxlength="2000" required placeholder="Record the field team's result"></textarea></label>{% endif %}<button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Complete{% endif %}</button></form></div>
+    <div class="task-row"><div class="task-check {% if t['status']=='Completed' %}done{% endif %}">{% if t['status']=='Completed' %}✓{% else %}○{% endif %}</div><div class="task-text {% if t['status']=='Completed' %}completed{% endif %}"><strong>{{ t['title'] }}</strong>{% if t['kind']=='evidence' %}<span class="pill">Evidence</span>{% endif %}{% if t['due_date'] %}<small> · Due {{ t['due_date'] }}</small>{% endif %}{% if t['status']=='Completed' and t['outcome'] %}<p class="task-outcome">Outcome: {{ t['outcome'] }}</p>{% endif %}</div>{% if current_user and current_user['role'] in ['officer', 'admin'] %}<form class="task-action-form" method="post" action="{{ url_for('toggle_task', task_id=t['id']) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if t['status']=='Pending' %}<label>What happened?<textarea name="outcome" rows="2" maxlength="2000" required placeholder="Record the field team's result"></textarea></label>{% endif %}<button class="button tiny secondary" type="submit">{% if t['status']=='Completed' %}Reopen{% else %}Complete{% endif %}</button></form>{% endif %}</div>
     {% endfor %}
   </div>
   {% else %}<p class="muted">No follow-up tasks.</p>{% endif %}
-  <form class="add-task-form" method="post" action="{{ url_for('add_task', case_id=case['id']) }}">
+  {% if current_user and current_user['role'] in ['officer', 'admin'] %}<form class="add-task-form" method="post" action="{{ url_for('add_task', case_id=case['id']) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>New field action<input name="title" maxlength="200" required placeholder="e.g. Visit affected field and record extent"></label>
     <label>Due date<input name="due_date" type="date"></label>
     <button class="button secondary" type="submit">Add action</button>
-  </form>
+  </form>{% endif %}
 </section>
 {% endblock %}

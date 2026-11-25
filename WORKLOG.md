@@ -101,3 +101,29 @@ Use this file to record work completed during the Meta Global AI Developer Hacka
 - Feature 4: /district-brief read-only brief with period deltas, mix, clusters, queues, findings, actions, outcomes; print stylesheet; server-side PDF deliberately skipped.
 - A/B/C: synthetic/unverified/verified labelling audited on new surfaces; rejecting a report removes it from clusters (locked by test); no new secrets surface.
 - Validation: `python -m unittest` -- 78 tests passed; `node --check` clean on all app scripts.
+
+
+## 2026-11-24 — P0-1 sign-in, roles, and workspaces
+- Added users table via additive migration (username UNIQUE, scrypt password hash, role).
+- Session sign-in/out with role-based access: officers/admins mutate, decision-makers read-only.
+- All routes require sign-in except /health (documented probe exception); /static stays public for assets.
+- Reviews, evidence, tasks, and status changes now record the signed-in account, not free-text names.
+- Added `python app.py --create-user USERNAME --role ROLE` CLI (12-char minimum password); documented in README.
+- Templates: login page, nav auth controls, officer-gated forms, read-only notice for decision-makers.
+- Validation: `python -m unittest discover -v` — 89 tests passed (78 existing + 11 new auth tests).
+
+
+## 2026-11-24 — P0-2 CSRF protection
+- Global before-request CSRF validation on every POST route (synchronizer token per session, constant-time compare).
+- Hidden token added to all 10 POST forms: intake, 6 case-detail forms, operations complete, login, logout.
+- /health and /static exempt (no mutations there); tokenless/forged POSTs get 400 before auth checks run.
+- Tests: auto-token test-client wrapper keeps existing tests meaningful; 6 new CSRF tests (missing/wrong/unicode tokens, form wiring, ordering, logout/login coverage).
+- Validation: `python -m unittest discover -v` — 95 tests passed (89 existing + 6 new).
+
+
+## 2026-11-24 — P0-3 fail-closed production config
+- Booting refuses to start without FLASK_SECRET_KEY (clear error with generation command); dev fallback removed.
+- FARMOPS_ENV modes (default production): Secure cookies, http-to-https 301 (proxy-aware, health/static exempt), HSTS, debug force-disabled with a warning when FLASK_DEBUG=true is ignored.
+- FARMOPS_ENV_FILE override added for hermetic boot tests; .env.example and README document modes and secret setup.
+- Tests: mode/debug mapping, Secure-follows-production, redirect + HSTS behavior, two subprocess boot tests.
+- Validation: `python -m unittest discover -v` — 101 tests passed (95 existing + 6 new). One full-suite run hit an environmental Subprocess timeout under heavy machine load (869s run); clean re-run green in 170s.

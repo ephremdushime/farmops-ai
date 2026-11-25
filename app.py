@@ -1,10 +1,14 @@
+import argparse
 import base64
+import getpass
 import hashlib
+import hmac
 import io
 import json
 import math
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -13,6 +17,7 @@ import uuid
 import wave
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from io import BytesIO
 from pathlib import Path
 
@@ -29,14 +34,18 @@ from flask import (
     render_template,
     request,
     send_file,
+    session,
     url_for,
 )
 from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 
 
-def load_environment(env_file=BASE_DIR / ".env"):
+def load_environment(env_file=None):
+    if env_file is None:
+        env_file = os.getenv("FARMOPS_ENV_FILE", str(BASE_DIR / ".env"))
     load_dotenv(dotenv_path=env_file, override=False)
 
 
@@ -70,16 +79,89 @@ ALLOWED_VOICE_TYPES = {
 VOICE_TRANSCRIBE_MODEL = "muse-voice-transcribe-1.0"
 VOICE_TRANSCRIBE_URL = META_API_BASE_URL + "/asr/transcribe"
 VOICE_TRANSCRIBE_TIMEOUT_SECONDS = 300.0
+USER_ROLES = {"officer", "decision_maker", "admin"}
+MUTATING_ROLES = {"officer", "admin"}
+MIN_PASSWORD_LENGTH = 12
+def _is_production(environ=None):
+    environ = os.environ if environ is None else environ
+    return environ.get("FARMOPS_ENV", "production").lower() != "development"
+
+
+def _debug_enabled(environ=None):
+    environ = os.environ if environ is None else environ
+    return environ.get("FLASK_DEBUG", "false").lower() == "true" and not _is_production(environ)
+
+
+def _server_port(environ=None):
+    environ = os.environ if environ is None else environ
+    raw = environ.get("PORT", "5000")
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        raise SystemExit("Invalid PORT %r: expected an integer 1-65535." % (raw,))
+    if not 1 <= port <= 65535:
+        raise SystemExit("Invalid PORT %r: expected an integer 1-65535." % (raw,))
+    return port
+
+
+PRODUCTION = _is_production()
+
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me")
+_secret_key = os.getenv("FLASK_SECRET_KEY", "")
+if not _secret_key:
+    raise RuntimeError(
+        "FLASK_SECRET_KEY is not set. Generate one with "
+        '`python -c "import secrets; print(secrets.token_hex(32))"` '
+        "and set it in the environment or .env file. Refusing to boot without a secret."
+    )
+app.secret_key = _secret_key
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = PRODUCTION
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
 
 @app.context_processor
 def shared_ui_state():
-    return {"meta_api_configured": bool((os.getenv("MODEL_API_KEY") or "").strip())}
+    return {
+        "meta_api_configured": bool((os.getenv("MODEL_API_KEY") or "").strip()),
+        "current_user": current_user(),
+        "csrf_token": session.get("_csrf_token", ""),
+    }
+
+
+@app.before_request
+def csrf_protect():
+    if request.endpoint in {"health", "static"}:
+        return None
+    if request.method == "POST":
+        expected = session.get("_csrf_token") or ""
+        submitted = request.form.get("csrf_token", "")
+        if not expected or not hmac.compare_digest(
+            expected.encode("utf-8"), submitted.encode("utf-8")
+        ):
+            abort(400)
+        return None
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(32)
+    return None
+
+
+@app.before_request
+def https_redirect():
+    if not PRODUCTION or request.endpoint in {"health", "static"}:
+        return None
+    forwarded = request.headers.get("X-Forwarded-Proto", "http")
+    if not request.is_secure and forwarded != "https":
+        return redirect(request.url.replace("http://", "https://", 1), code=301)
+    return None
+
+
+@app.after_request
+def security_headers(response):
+    if PRODUCTION:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 @contextmanager
@@ -214,6 +296,15 @@ def init_db():
                 FOREIGN KEY(case_id) REFERENCES cases(id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'officer',
+                created_at TEXT NOT NULL
+            )
+        """)
         existing_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(cases)")
         }
@@ -266,6 +357,86 @@ def init_db():
         evidence_columns = {row["name"] for row in conn.execute("PRAGMA table_info(case_evidence)")}
         if "shot_type" not in evidence_columns:
             conn.execute("ALTER TABLE case_evidence ADD COLUMN shot_type TEXT NOT NULL DEFAULT ''")
+
+
+def _get_user_by_id(user_id):
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id, username, role FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+    if not row:
+        return None
+    return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+
+def current_user():
+    if "user_id" not in session:
+        return None
+    return _get_user_by_id(session["user_id"])
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if current_user() is None:
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def officer_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if user is None:
+            return redirect(url_for("login", next=request.path))
+        if user["role"] not in MUTATING_ROLES:
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def create_user(username, password, role="officer"):
+    username = (username or "").strip()
+    if not username or len(username) > 120:
+        raise ValueError("Username must contain 1-120 characters.")
+    if role not in USER_ROLES:
+        raise ValueError("Role must be one of: %s." % ", ".join(sorted(USER_ROLES)))
+    if not password or len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError("Password must be at least %d characters." % MIN_PASSWORD_LENGTH)
+    with db() as conn:
+        try:
+            cursor = conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                (username, generate_password_hash(password), role, utc_timestamp()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Username %r is already taken." % username) from exc
+        return cursor.lastrowid
+
+
+def verify_user(username, password):
+    username = (username or "").strip()
+    if not username or not password:
+        return None
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id, username, password_hash, role FROM users WHERE username=?",
+            (username,),
+        ).fetchone()
+    if not row or not check_password_hash(row["password_hash"], password):
+        return None
+    return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+
+def _safe_next_url(value):
+    if value and value.startswith("/") and not value.startswith("//"):
+        return value
+    return url_for("index")
 
 
 URGENCY_LEVELS = {"Routine", "Soon", "Urgent field review", "Needs review"}
@@ -1408,6 +1579,7 @@ def build_watch_signals(cases, clusters, today=None):
 
 
 @app.route("/")
+@login_required
 def index():
     with db() as conn:
         cases = conn.execute("SELECT * FROM cases ORDER BY id DESC").fetchall()
@@ -1522,6 +1694,7 @@ def index():
 
 
 @app.route("/field-reports")
+@login_required
 def field_reports():
     district = request.args.get("district", "").strip()
     crop = request.args.get("crop", "").strip()
@@ -1612,6 +1785,7 @@ def _risk_map_geojson(cases, clusters):
 
 
 @app.route("/intelligence")
+@login_required
 def intelligence_cases():
     cases = _unresolved_cases()
     clusters = build_risk_clusters(cases)
@@ -1625,6 +1799,7 @@ def intelligence_cases():
 
 
 @app.route("/intelligence/graph")
+@login_required
 def intelligence_graph():
     cases = _unresolved_cases()
     clusters = build_risk_clusters(cases)
@@ -1643,6 +1818,7 @@ def intelligence_graph():
 
 
 @app.route("/district-brief")
+@login_required
 def district_brief():
     district = request.args.get("district", "").strip()
     try:
@@ -1742,6 +1918,7 @@ def district_brief():
 
 
 @app.route("/risk-map")
+@login_required
 def risk_map():
     cases = _unresolved_cases()
     clusters = build_risk_clusters(cases)
@@ -1754,6 +1931,7 @@ def risk_map():
 
 
 @app.route("/verification")
+@login_required
 def verification_centre():
     with db() as conn:
         reports = conn.execute("""
@@ -1795,6 +1973,7 @@ def verification_centre():
 
 
 @app.route("/operations")
+@login_required
 def response_operations():
     status_filter = request.args.get("status", "Pending")
     if status_filter not in {"Pending", "Completed", "All"}:
@@ -1817,6 +1996,7 @@ def response_operations():
 
 
 @app.route("/cases/new", methods=["GET", "POST"])
+@officer_required
 def new_case():
     if request.method == "POST":
         data = {
@@ -2068,6 +2248,7 @@ def request_too_large(_error):
 
 
 @app.route("/cases/<int:case_id>")
+@login_required
 def case_detail(case_id):
     with db() as conn:
         case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
@@ -2154,6 +2335,7 @@ def case_detail(case_id):
 
 
 @app.route("/cases/<int:case_id>/evidence/<path:filename>")
+@login_required
 def case_evidence(case_id, filename):
     if Path(filename).name != filename:
         abort(404)
@@ -2185,13 +2367,11 @@ def case_evidence(case_id, filename):
 
 
 @app.route("/cases/<int:case_id>/review", methods=["POST"])
+@officer_required
 def review_case(case_id):
-    reviewer = request.form.get("reviewer", "").strip()
+    reviewer = current_user()["username"]
     decision = request.form.get("decision", "")
     notes = request.form.get("notes", "").strip()
-    if not reviewer or len(reviewer) > 120:
-        flash("Enter the reviewing officer's name (up to 120 characters).", "error")
-        return redirect(url_for("case_detail", case_id=case_id))
     if decision not in {"verified", "follow_up", "rejected"}:
         flash("Choose a valid review decision.", "error")
         return redirect(url_for("case_detail", case_id=case_id))
@@ -2302,6 +2482,7 @@ def review_case(case_id):
 
 
 @app.route("/cases/<int:case_id>/tasks", methods=["POST"])
+@officer_required
 def add_task(case_id):
     title = request.form.get("title", "").strip()
     due_date = request.form.get("due_date", "").strip()
@@ -2326,7 +2507,7 @@ def add_task(case_id):
             conn,
             case_id,
             "action_assigned",
-            request.form.get("assigned_by", "").strip() or "Field team",
+            current_user()["username"],
             {"title": title, "due_date": due_date},
         )
     flash("Follow-up action added.", "success")
@@ -2334,12 +2515,10 @@ def add_task(case_id):
 
 
 @app.route("/cases/<int:case_id>/evidence", methods=["POST"])
+@officer_required
 def add_evidence(case_id):
     note = request.form.get("note", "").strip()
-    author = request.form.get("author", "").strip() or "Field team"
-    if len(author) > 120:
-        flash("Author name must be 120 characters or fewer.", "error")
-        return redirect(url_for("case_detail", case_id=case_id))
+    author = current_user()["username"]
     if not note or len(note) > 2000:
         flash("Enter follow-up evidence of up to 2,000 characters.", "error")
         return redirect(url_for("case_detail", case_id=case_id))
@@ -2449,6 +2628,7 @@ def add_evidence(case_id):
 
 
 @app.route("/cases/<int:case_id>/reassess", methods=["POST"])
+@officer_required
 def reassess_case(case_id):
     with db() as conn:
         case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
@@ -2513,6 +2693,7 @@ def reassess_case(case_id):
 
 
 @app.route("/tasks/<int:task_id>/toggle", methods=["POST"])
+@officer_required
 def toggle_task(task_id):
     with db() as conn:
         task = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -2531,7 +2712,7 @@ def toggle_task(task_id):
                     conn,
                     task["case_id"],
                     "action_completed",
-                    request.form.get("actor", "").strip() or "Field team",
+                    current_user()["username"],
                     {"task_id": task_id, "title": task["title"], "outcome": outcome},
                 )
             else:
@@ -2541,7 +2722,7 @@ def toggle_task(task_id):
                     conn,
                     task["case_id"],
                     "action_reopened",
-                    request.form.get("actor", "").strip() or "Field team",
+                    current_user()["username"],
                     {"task_id": task_id, "title": task["title"]},
                 )
             flash(f"Task marked {new_status.lower()}.", "success")
@@ -2553,6 +2734,7 @@ def toggle_task(task_id):
 
 
 @app.route("/cases/<int:case_id>/status", methods=["POST"])
+@officer_required
 def update_case_status(case_id):
     status = request.form.get("status", "Open")
     if status not in {"Open", "In progress", "Resolved"}:
@@ -2578,7 +2760,7 @@ def update_case_status(case_id):
                 conn,
                 case_id,
                 "case_status_changed",
-                request.form.get("actor", "").strip() or "Field team",
+                current_user()["username"],
                 {
                     "from": case["status"],
                     "to": status,
@@ -2593,9 +2775,34 @@ def update_case_status(case_id):
     return redirect(url_for("case_detail", case_id=case_id))
 
 
+# /health stays unauthenticated so orchestration probes work; it returns no case data.
 @app.route("/health")
 def health():
     return {"status": "ok", "app": "FarmOps AI"}
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        user = verify_user(request.form.get("username", ""), request.form.get("password", ""))
+        if user is None:
+            flash("Invalid username or password.", "error")
+            return render_template("login.html", next=request.form.get("next", ""))
+        session.clear()
+        session["user_id"] = user["id"]
+        flash("Signed in as %s." % user["username"], "success")
+        return redirect(_safe_next_url(request.form.get("next", "")))
+    if current_user() is not None:
+        return redirect(url_for("index"))
+    return render_template("login.html", next=request.args.get("next", ""))
+
+
+@app.route("/logout", methods=["POST"])
+@login_required
+def logout():
+    session.clear()
+    flash("Signed out.", "success")
+    return redirect(url_for("login"))
 
 
 def seed_demo_data():
@@ -2799,10 +3006,26 @@ def seed_demo_data():
     return len(records)
 
 
-init_db()
-
 if __name__ == "__main__":
-    if "--seed-demo" in os.sys.argv:
+    if "--migrate" in os.sys.argv:
+        init_db()
+        print("Database schema is up to date (%s)." % DB_PATH)
+    elif "--create-user" in os.sys.argv:
+        parser = argparse.ArgumentParser(description="Create a FarmOps AI user.")
+        parser.add_argument("--create-user", metavar="USERNAME", required=True)
+        parser.add_argument("--role", default="officer", choices=sorted(USER_ROLES))
+        args = parser.parse_args()
+        init_db()
+        password = getpass.getpass(
+            "Password for %s (min %d chars): " % (args.create_user, MIN_PASSWORD_LENGTH)
+        )
+        try:
+            user_id = create_user(args.create_user, password, args.role)
+        except ValueError as exc:
+            raise SystemExit("Could not create user: %s" % exc) from exc
+        print("Created user %r with role %r (id %d)." % (args.create_user, args.role, user_id))
+    elif "--seed-demo" in os.sys.argv:
+        init_db()
         try:
             count = seed_demo_data()
         except ValueError as exc:
@@ -2812,4 +3035,7 @@ if __name__ == "__main__":
             "Intelligence and Risk Map pages. No existing records were changed."
         )
     else:
-        app.run(debug=os.getenv("FLASK_DEBUG", "false").lower() == "true", host="127.0.0.1", port=int(os.getenv("PORT", "5000")))
+        debug = _debug_enabled()
+        if not debug and os.getenv("FLASK_DEBUG", "false").lower() == "true":
+            print("FLASK_DEBUG=true is ignored: debug mode is disabled in production.")
+        app.run(debug=debug, host="127.0.0.1", port=_server_port())
